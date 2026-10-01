@@ -11,6 +11,40 @@ on:
     inputs:
       test_grep:
         description: "Optional test filter / regex. Leave blank to run the complete suite."
+        required: false
+        default: ""
+        type: string
+      headless:
+        description: "Run Chromium headless"
+        required: false
+        default: false
+        type: boolean
+      send_report:
+        description: "Send DAILY_REPORT_EMAILS and FAILURE_ALERT_EMAILS"
+        required: false
+        default: true
+        type: boolean
+      debug_mode:
+        description: "Enable Playwright debug logging"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: "22"
+  PLAYWRIGHT_PROJECT: "chromium-extension"
+  TOTAL_SHARDS: "8"
+  DEFAULT_WORKERS: "1"
+  MIN_EXPECTED_TESTS: "55"
+
+  # Bump whenever any external fixture or its Drive ID changes.
+  FIXTURE_CACHE_VERSION: "v2"
+
+  DRIVE_MULTI_FILE_1_1: "1WQ8X5E0resIr1MQT9OxtgHI4CwILu-xO"
+  DRIVE_LARGE_1GB: "1WaxD-XaPU8lTbEUflrnKdfyr6jCny123"
+  DRIVE_LARGE_1_3GB: "1uxqHpJ1UvRoehvc7Qr3iGzz71KAl84UT"
+
+  # Correct ID from:
   # https://drive.google.com/file/d/188Zhju97yGKYLpA-shobecd_We7DYbOw/view
   DRIVE_LARGE_1_69GB: "188Zhju97yGKYLpA-shobecd_We7DYbOw"
 
