@@ -20,7 +20,15 @@ import {
  * Default timeout 30 minutes per test.
  */
 test.describe("Large files @large-file @p1", () => {
+  // Large uploads hit flaky backend session drops ("Upload not initialized").
+  // Give this suite one extra CI retry beyond the global retries:1.
+  test.describe.configure({ retries: process.env.CI ? 2 : 0 });
   test.setTimeout(35 * 60 * 1000); // 30 min process + overhead
+
+  // Short cool-down so sequential multi-GB uploads do not overlap server sessions.
+  test.afterEach(async () => {
+    await new Promise((r) => setTimeout(r, process.env.CI ? 3000 : 500));
+  });
 
   const LARGE_FIXTURES = [
     { id: "large_1GB", path: TestData.large1GB, label: "large_1GB_MrSID.sid" },
