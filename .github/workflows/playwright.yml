@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       RUN_LARGE_FILE_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_large_file_tests == true && '1' || '0' }}
-      GEOVIEWER_EXTRA_FIXTURE_IDS: ${{ vars.GEOVIEWER_EXTRA_FIXTURE_IDS || '{}' }}
+      GEOVIEWER_EXTRA_FIXTURE_IDS: ${{ vars.GEOVIEWER_EXTRA_FIXTURE_IDS || secrets.GEOVIEWER_EXTRA_FIXTURE_IDS || '{}' }}
 
     steps:
       - name: Checkout repository
@@ -175,14 +175,14 @@ jobs:
 
   test:
     needs: preflight
-    name: Shard ${{ matrix.shard }}/8 - chromium-extension
+    name: Shard ${{ matrix.shard }}/4 - chromium-extension
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      max-parallel: 8
+      max-parallel: 4
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout repository
@@ -209,7 +209,7 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run Playwright shard ${{ matrix.shard }}/8
+      - name: Run Playwright shard ${{ matrix.shard }}/4
         env:
           CI: "true"
           HEADLESS: ${{ github.event_name == 'workflow_dispatch' && inputs.headless == true && 'true' || 'false' }}
@@ -225,7 +225,7 @@ jobs:
           xvfb-run -a npx playwright test \
             --project=chromium-extension \
             --workers="${{ inputs.workers || '1' }}" \
-            --shard=${{ matrix.shard }}/8 2>&1 | tee "shard-${{ matrix.shard }}.log"
+            --shard=${{ matrix.shard }}/4 2>&1 | tee "shard-${{ matrix.shard }}.log"
 
       - name: Upload shard log and test results
         if: always()
