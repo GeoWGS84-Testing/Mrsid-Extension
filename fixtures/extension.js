@@ -172,6 +172,7 @@ export const test = base.extend({
     const { context, userDataDir } = launched;
     const pendingMemorySnapshots = new Set();
     const videos = new Set();
+    let tracingStarted = false;
     const failure = () => ["failed", "timedOut"].includes(testInfo.status);
 
     const captureMemory = (page, phase) => {
@@ -254,9 +255,13 @@ export const test = base.extend({
     };
     context.serviceWorkers().forEach(collectServiceWorker);
     context.on("serviceworker", collectServiceWorker);
-    await context.tracing.start({ screenshots: true, snapshots: true, sources: true }).catch((error) => {
+    try {
+      await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+      tracingStarted = true;
+    } catch (error) {
       recordDiagnostic({ severity: "warning", message: error.message, source: "playwright-trace" });
-    });
+      tracingStarted = false;
+    }
 
     try {
       await use(context);
@@ -272,25 +277,7 @@ export const test = base.extend({
         Math.min(CLEANUP_TIMEOUT_MS, 5_000)
       );
 
-      const tracePath = testInfo.outputPath("trace.zip");
-      if (failure() || testInfo.retry > 0) {
-        const saved = await bestEffortCleanup("save trace", () =>
-          context.tracing.stop({ path: tracePath })
-        );
-        if (saved) {
-          await bestEffortCleanup("attach trace", () =>
-            testInfo.attach("trace", { path: tracePath, contentType: "application/zip" })
-          );
-        }
-      } else {
-        await bestEffortCleanup("stop trace", () => context.tracing.stop());
-      }
-
-      const closed = await bestEffortCleanup("close browser context", () => context.close());
-      if (!closed) {
-        await bestEffortCleanup("force close browser", () => context.browser()?.close());
-      }
-
+      // Save videos BEFORE closing the context — saveAs fails after close.
       if (getWarnings().length > 0 || failure() || testInfo.retry > 0) {
         for (const [index, video] of [...videos].entries()) {
           const file = testInfo.outputPath(`video-${index + 1}.webm`);
@@ -305,6 +292,27 @@ export const test = base.extend({
             );
           }
         }
+      }
+
+      const tracePath = testInfo.outputPath("trace.zip");
+      if (tracingStarted) {
+        if (failure() || testInfo.retry > 0) {
+          const saved = await bestEffortCleanup("save trace", () =>
+            context.tracing.stop({ path: tracePath })
+          );
+          if (saved) {
+            await bestEffortCleanup("attach trace", () =>
+              testInfo.attach("trace", { path: tracePath, contentType: "application/zip" })
+            );
+          }
+        } else {
+          await bestEffortCleanup("stop trace", () => context.tracing.stop());
+        }
+      }
+
+      const closed = await bestEffortCleanup("close browser context", () => context.close());
+      if (!closed) {
+        await bestEffortCleanup("force close browser", () => context.browser()?.close());
       }
 
       await persistShardDiagnostics();
