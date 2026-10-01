@@ -5,29 +5,28 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const testResultsDir = process.env.PW_TEST_RESULTS_DIR || "test-results";
+const htmlReportDir = process.env.PW_HTML_REPORT_DIR || "playwright-report";
+const blobReportDir = process.env.PW_BLOB_REPORT_DIR || "blob-report";
 
 /**
  * Playwright reporters.
  *
- * Local:
- *   - list
- *   - HTML
- *
- * CI:
- *   - list
- *   - HTML
- *   - blob
+ * Every run emits JSON, JUnit, and HTML reports.
+ * CI additionally emits a blob report for shard aggregation.
  *
  * The blob reporter is important because the 8 shards are merged later
  * into one consolidated Playwright report.
  */
 const reporter = [
   ["list"],
+  ["json", { outputFile: path.join(testResultsDir, "results.json") }],
+  ["junit", { outputFile: path.join(testResultsDir, "junit.xml") }],
   [
     "html",
     {
       open: "never",
-      outputFolder: "playwright-report",
+      outputFolder: htmlReportDir,
     },
   ],
 ];
@@ -40,7 +39,7 @@ if (process.env.CI) {
   reporter.push([
     "blob",
     {
-      outputDir: "blob-report",
+      outputDir: blobReportDir,
     },
   ]);
 }
@@ -50,6 +49,7 @@ export default defineConfig({
    * Existing project structure.
    */
   testDir: "./tests",
+  outputDir: testResultsDir,
   testMatch: "**/*.spec.js",
 
   /**
@@ -73,6 +73,7 @@ export default defineConfig({
    */
   retries: process.env.CI ? 1 : 0,
 
+  maxFailures: process.env.CI ? 0 : undefined,
   /**
    * Extension contexts are heavy.
    *
@@ -115,7 +116,7 @@ export default defineConfig({
     /**
      * Keep video enabled.
      */
-    video: "on",
+    video: "retain-on-failure",
 
     /**
      * Preserve existing action/navigation timeouts.

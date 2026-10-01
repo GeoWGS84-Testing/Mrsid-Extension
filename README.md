@@ -97,7 +97,7 @@ Client-side rejection tests (03-*) do **not**.
 ## GitHub Actions
 
 The workflow at `.github/workflows/playwright.yml` runs the
-`chromium-extension` project in four parallel shards. It downloads the provided
+`chromium-extension` project in eight parallel shards. It downloads the provided
 GeoTIFF fixtures from Google Drive; the three large fixtures are downloaded
 only when `run_large_file_tests` is enabled. Large raster files are not
 committed to Git.
@@ -116,6 +116,11 @@ clean CI checkout until IDs are added:
 Add available IDs as a JSON object in the repository variable or secret
 `GEOVIEWER_EXTRA_FIXTURE_IDS`, keyed by paths relative to `test-data/`, for
 example `{"valid/01_NAIP_2014_WGS84.sid":"DRIVE_FILE_ID"}`.
+
+Each shard publishes Playwright JSON and JUnit results, an HTML report, a blob
+report for merging, and `diagnostics/shard-NN.json`. The consolidated summary
+uses Playwright result data; missing artifacts or a shard with no collected test
+results are reported as data-collection failures and fail the workflow.
 
 ## Primary flow steps (POM)
 

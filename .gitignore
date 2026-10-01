@@ -6,6 +6,7 @@ blob-report/
 *.log
 .env
 .env.*
+!extension/.env
 test-data/valid/large_*
 test-data/valid/S1A_Ireland_Complex_Mosaic_May2015_20m_EPSG2157_1.69GB.tif
 test-data/valid/Valid_GeoTIF.tif

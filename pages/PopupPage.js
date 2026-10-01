@@ -1,5 +1,8 @@
 import { expect } from "@playwright/test";
 import { UI_STRINGS } from "../fixtures/testData.js";
+
+const DEFAULT_PROCESSING_TIMEOUT = 30 * 60 * 1000;
+const PROCESSING_TIMEOUT = Number(process.env.PW_PROCESSING_TIMEOUT_MS) || DEFAULT_PROCESSING_TIMEOUT;
 import {
   startVisualTest,
   refreshVisualUrl,
@@ -214,85 +217,75 @@ export class PopupPage {
     logInfo("✅ Extracting phase visible");
   }
 
-  async waitForProcessingComplete(timeout = 30 * 60 * 1000) {  // 30 min max
-    this._vortexStart = null;
+  async waitForProcessingComplete(timeout = PROCESSING_TIMEOUT) {
     await showStep(this.page, "Wait for raster processing to complete", this.statusValue);
 
-    const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      const status = ((await this.statusValue.textContent()) || "").trim();
-      const loaderVisible = await this.loader.isVisible().catch(() => false);
-
-      if (/^Error:/i.test(status) || /does not contain georeferencing/i.test(status)) {
-        await addError("Processing ended with product error", { status });
-        await takeScreenshot(this.page, "processing-product-error");
-        throw new Error(`Processing failed: ${status}`);
+    let outcome;
+    try {
+      const handle = await this.page.waitForFunction(() => {
+        const statusElement = document.querySelector("#statusValue");
+        if (!statusElement) return false;
+        const status = (statusElement.textContent || "").trim();
+        const failed = /^Error:/i.test(status) ||
+          /does not contain georeferencing/i.test(status) ||
+          /\b(?:chunk|part)\s+\d+\s+failed\b/i.test(status);
+        if (failed) return { status, failed: true };
+        const loader = document.querySelector("#loader");
+        const complete = /Analysis Complete|All files processed!/i.test(status) &&
+          (!loader || getComputedStyle(loader).display === "none");
+        return complete ? { status, failed: false } : false;
+      }, undefined, { timeout, polling: 250 });
+      outcome = await handle.jsonValue();
+      await handle.dispose();
+    } catch (error) {
+      if (error.name !== "TimeoutError" && !/Timeout .* exceeded/i.test(error.message)) {
+        await addError("Processing wait failed", { error: error.message });
+        throw error;
       }
-
-      if (
-        !loaderVisible &&
-        /Analysis Complete|All files processed!/i.test(status)
-      ) {
-        logInfo(`✅ Processing complete — status: ${status}`);
-        await highlight(this.page, this.statusValue, 350);
-        await this.assertTimerProcessed().catch(async (e) => {
-          await addWarning("Timer PROCESSED check soft-failed", { error: e.message });
-        });
-        return;
-      }
-
-      // Stuck on Vortex Engine for a very long time only (large files legitimately
-      // stay here for 1–3+ minutes). Default overall timeout still bounds the wait.
-      if (/Vortex Engine/i.test(status)) {
-        if (!this._vortexStart) this._vortexStart = Date.now();
-        // Log progress every ~15s so runs are debuggable, but do NOT fail early.
-        const elapsed = Date.now() - this._vortexStart;
-        if (elapsed > 0 && elapsed % 15_000 < 500) {
-          logInfo(`Still on Vortex Engine… ${Math.round(elapsed / 1000)}s`);
-        }
-      } else {
-        this._vortexStart = null;
-      }
-
-      await this.page.waitForTimeout(400);
+      const finalStatus = ((await this.statusValue.textContent()) || "").trim();
+      const loaderStill = await this.loader.isVisible().catch(() => false);
+      await addError("Processing timed out", { status: finalStatus, loaderVisible: loaderStill, timeout, error: error.message });
+      await takeScreenshot(this.page, "processing-timeout");
+      const mins = Math.round(timeout / 60000);
+      throw new Error(
+        `PROCESSING_TIMEOUT: Processing exceeded ${mins} min. status="${finalStatus}" loader=${loaderStill}`
+      );
     }
 
-    const finalStatus = ((await this.statusValue.textContent()) || "").trim();
-    const loaderStill = await this.loader.isVisible().catch(() => false);
-    await addError("Processing timed out", {
-      status: finalStatus,
-      loaderVisible: loaderStill,
-      timeout,
+    if (outcome.failed) {
+      await addError("Processing ended with product error", { status: outcome.status });
+      await takeScreenshot(this.page, "processing-product-error");
+      throw new Error(`Processing failed: ${outcome.status}`);
+    }
+
+    logInfo(`✅ Processing complete — status: ${outcome.status}`);
+    await highlight(this.page, this.statusValue, 350);
+    await this.assertTimerProcessed().catch(async (error) => {
+      await addWarning("Timer PROCESSED check soft-failed", { error: error.message });
     });
-    await takeScreenshot(this.page, "processing-timeout");
-    const mins = Math.round(timeout / 60000);
-    throw new Error(
-      `PROCESSING_TIMEOUT_30MIN: Processing exceeded ${mins} min. status="${finalStatus}" loader=${loaderStill}`
-    );
   }
 
   /**
-   * Wait up to 30 min for processing. If still not done, skip the test
-   * (does not fail the suite). Prefer this in long upload flows.
+  * Wait up to 30 min for processing. A real upload timeout is a test failure;
+  * only absent fixtures should be skipped.
    * @param {import('@playwright/test').TestInfo} [testInfo]
    * @param {number} [timeout]
    */
-  async waitForProcessingCompleteOrSkip(testInfo, timeout = 30 * 60 * 1000) {
+  async waitForProcessingCompleteOrSkip(testInfo, timeout = PROCESSING_TIMEOUT) {
     try {
       await this.waitForProcessingComplete(timeout);
     } catch (error) {
       const msg = error?.message || String(error);
-      if (/PROCESSING_TIMEOUT_30MIN|exceeded \d+ min|timed out after/i.test(msg)) {
+      if (/PROCESSING_TIMEOUT|exceeded \d+ min|timed out after/i.test(msg)) {
         const status = ((await this.statusValue.textContent()) || "").trim();
-        logInfo(`⏳ Processing >30 min — skipping test. status="${status}"`);
+        logInfo(`Processing timeout is a failure. status="${status}"`);
         if (testInfo) {
           testInfo.annotations.push({
             type: "timeout",
-            description: `Skipped after 30 min processing. Last status: ${status}`,
+            description: `Processing exceeded timeout. Last status: ${status}`,
           });
-          testInfo.skip(true, `Processing exceeded 30 minutes. Last status: ${status}`);
         }
-        return false;
+        throw new Error(`Processing timed out. Last status: ${status}`, { cause: error });
       }
       throw error;
     }
@@ -314,10 +307,36 @@ export class PopupPage {
       this.statusValue
     );
 
-    await expect(this.statusValue).toContainText(expectedFragment, { timeout });
+    const matcher = typeof expectedFragment === "string"
+      ? { text: expectedFragment }
+      : { source: expectedFragment.source, flags: expectedFragment.flags };
+    const handle = await this.page.waitForFunction(
+      ({ matcher }) => {
+        const element = document.querySelector("#statusValue");
+        if (!element) return false;
+        const status = (element.textContent || "").trim();
+        const expected = matcher.text !== undefined
+          ? status.includes(matcher.text)
+          : new RegExp(matcher.source, matcher.flags).test(status);
+        if (expected) return { status, matched: true };
+        if (/^Error:/i.test(status) || /\b(?:chunk|part)\s+\d+\s+failed\b/i.test(status)) {
+          return { status, matched: false };
+        }
+        return false;
+      },
+      { matcher },
+      { timeout, polling: 250 }
+    );
+    const result = await handle.jsonValue();
+    await handle.dispose();
+    if (!result.matched) {
+      await addError("Unexpected terminal upload error", { expected: label, status: result.status });
+      await takeScreenshot(this.page, "unexpected-upload-error");
+      throw new Error(`Expected ${label}, received terminal status: ${result.status}`);
+    }
 
     await highlight(this.page, this.statusValue, 600);
-    const status = ((await this.statusValue.textContent()) || "").trim();
+    const status = result.status;
     logInfo(`✅ Error status observed: ${status}`);
 
     // Timer / badge often shows ERROR
@@ -652,7 +671,7 @@ export class PopupPage {
    *  - single-file still accepts "Analysis Complete"
    * Observes status changes and returns last metadata snapshot.
    */
-  async waitForMultiFileComplete(expectedCount, timeout = 30 * 60 * 1000) {
+  async waitForMultiFileComplete(expectedCount, timeout = PROCESSING_TIMEOUT) {
     await showStep(
       this.page,
       `Wait for multi-file processing (${expectedCount} files)`,
@@ -678,7 +697,11 @@ export class PopupPage {
         await highlight(this.page, this.statusValue, 250);
       }
 
-      if (/^Error:/i.test(status) || /does not contain georeferencing/i.test(status)) {
+      if (
+        /^Error:/i.test(status) ||
+        /does not contain georeferencing/i.test(status) ||
+        /\b(?:chunk|part)\s+\d+\s+failed\b/i.test(status)
+      ) {
         await addError("Multi-file processing error", { status, seenStatuses });
         await takeScreenshot(this.page, "multi-file-error");
         throw new Error(`Multi-file failed: ${status}`);
@@ -709,7 +732,14 @@ export class PopupPage {
         return { status, seenStatuses, lastMeta };
       }
 
-      await this.page.waitForTimeout(800);
+      await this.page.waitForFunction(
+        (previousStatus) => {
+          const element = document.querySelector("#statusValue");
+          return element && (element.textContent || "").trim() !== previousStatus;
+        },
+        lastLogged,
+        { timeout: Math.max(1, deadline - Date.now()), polling: 250 }
+      ).catch(() => {});
     }
 
     await addError("Multi-file timed out", { seenStatuses, lastMeta });

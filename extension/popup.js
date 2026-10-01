@@ -132,6 +132,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             const success = await uploadFile(files[i], i + 1, files.length);
             if (!success) {
                 hasError = true;
+                break;
             }
         }
         if (!hasError) {
@@ -380,8 +381,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             const previewUrl = `${backendUrl}/preview_image?file=${encodeURIComponent(data.name)}&v=${Date.now()}`;
 
             await fetch(previewUrl)
-                .then(response => response.blob())
+                .then(response => {
+                    if (!response.ok) throw new Error(`Preview request failed with HTTP ${response.status}`);
+                    return response.blob();
+                })
                 .then(blob => {
+                    if (blob.size === 0) throw new Error("Preview response was empty");
                     const objectUrl = URL.createObjectURL(blob);
                     mapDataList[dataIndex].image = objectUrl;
                     img.src = objectUrl;
@@ -389,7 +394,10 @@ document.addEventListener("DOMContentLoaded", async () => {
                     zoomLevel = 2.5;
                     img.style.transform = `scale(${zoomLevel})`;
                 })
-                .catch(err => console.error("Failed preview:", err));
+                .catch(err => {
+                    console.error("Failed preview:", err);
+                    throw new Error(`Error: Preview generation failed: ${err.message}`);
+                });
 
             return true;
         } catch (err) {
@@ -453,7 +461,10 @@ document.addEventListener("DOMContentLoaded", async () => {
                     method: "POST",
                     body: buildFormData()
                 });
-                if (!res.ok) throw new Error(`Chunk ${index} failed`);
+                if (!res.ok) {
+                    const detail = (await res.text()).slice(0, 500);
+                    throw new Error(`HTTP ${res.status} ${res.statusText}: ${detail}`);
+                }
             } catch (err) {
                 console.warn(`Chunk ${index} failed, retrying...`, err);
                 await retryChunk(host, buildFormData, index);
@@ -494,6 +505,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     // ✅ NEW: Retry failed chunk with exponential backoff (ported from the 372-line version)
     async function retryChunk(host, buildFormData, index, retries = 3) {
+        let lastError = "unknown response";
         for (let attempt = 0; attempt < retries; attempt++) {
             try {
                 await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, attempt)));
@@ -502,11 +514,14 @@ document.addEventListener("DOMContentLoaded", async () => {
                     body: buildFormData()
                 });
                 if (res.ok) return index;
+                const detail = (await res.text()).slice(0, 500);
+                lastError = `HTTP ${res.status} ${res.statusText}: ${detail}`;
             } catch (err) {
-                console.log(`Retry ${attempt + 1} for chunk ${index}`);
+                lastError = err.message || String(err);
             }
+            console.warn(`Retry ${attempt + 1}/${retries} failed for chunk ${index}: ${lastError}`);
         }
-        throw new Error(`Chunk ${index} failed after ${retries} retries`);
+        throw new Error(`Chunk ${index} failed after ${retries} retries: ${lastError}`);
     }
 
     function renderMetadata(data) {

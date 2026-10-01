@@ -339,6 +339,41 @@ function sortTestsByDefinitionOrder(allTests) {
 // ============================================================
 
 function readDiagnostics(testId, testTitle) {
+  if (testTitle && fs.existsSync(DIAG_DIR)) {
+    const events = [];
+    for (const file of fs.readdirSync(DIAG_DIR).filter((name) => /^shard-\d+\.json$/.test(name))) {
+      try {
+        const records = JSON.parse(fs.readFileSync(path.join(DIAG_DIR, file), "utf-8"));
+        if (Array.isArray(records)) {
+          events.push(...records.filter((record) =>
+            record.testName === testTitle || record.testName?.endsWith(` › ${testTitle}`) || record.testName?.endsWith(testTitle)
+          ));
+        }
+      } catch (error) {
+        console.warn(`[REPORTER] Failed to parse shard diagnostics: ${file}`, error.message);
+      }
+    }
+    if (events.length) {
+      const convert = (event) => ({
+        time: event.timestamp,
+        test: testTitle,
+        flow: event.source,
+        message: event.message,
+        meta: { source: event.source, stackTrace: event.stackTrace },
+      });
+      return {
+        testcase: testTitle,
+        infos: events.filter((event) => event.severity === "info").map(convert),
+        warnings: events.filter((event) => event.severity === "warning").map(convert),
+        errors: events.filter((event) => event.severity === "error").map(convert),
+        skippedSteps: [],
+        browserConsole: events.filter((event) => event.source?.includes("console")).map((event) =>
+          `[${event.severity.toUpperCase()}] ${event.timestamp} ${event.source}: ${event.message}`
+        ),
+      };
+    }
+  }
+
   if (testId) {
     const safeId = String(testId)
       .replace(/[:/\\<>?"|*]/g, "_")

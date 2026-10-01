@@ -8,7 +8,9 @@ import path from "path";
 export const VISUAL_STEP_DELAY_MS = Number(
   process.env.VISUAL_STEP_DELAY_MS || process.env.PW_SLOWMO || 500
 );
-export const DIAG_DIR = path.join(process.cwd(), "diagnostics");
+export const DIAG_DIR = process.env.PW_DIAGNOSTICS_DIR
+  ? path.resolve(process.env.PW_DIAGNOSTICS_DIR)
+  : path.join(process.cwd(), "diagnostics");
 export const SCREENSHOT_DIR = path.join(process.cwd(), "test-results", "manual-shots");
 
 let CURRENT_PAGE = null;
@@ -19,6 +21,8 @@ let STEP_COUNTER = 0;
 let INFOS = [];
 let WARNINGS = [];
 let ERRORS = [];
+let TEST_DIAGNOSTICS = [];
+let ACTIVE_TEST_TITLE = "";
 /** @type {WeakMap<object, {tc:string, step:string, url:string}>} */
 const PAGE_VISUAL_STATE = new WeakMap();
 
@@ -75,6 +79,27 @@ export function clearDiagnostics() {
   ERRORS = [];
   STEP_COUNTER = 0;
   CURRENT_STEP = "";
+}
+
+export function beginTestDiagnostics(title) {
+  TEST_DIAGNOSTICS = [];
+  ACTIVE_TEST_TITLE = title;
+}
+
+export function recordDiagnostic({ severity, message, stackTrace = "", source = "application" }) {
+  TEST_DIAGNOSTICS.push({
+    timestamp: ts(),
+    shard: Number(process.env.SHARD) || null,
+    testName: ACTIVE_TEST_TITLE || CURRENT_TC || "UNKNOWN",
+    severity,
+    message: String(message || ""),
+    stackTrace: String(stackTrace || ""),
+    source,
+  });
+}
+
+export function getTestDiagnostics() {
+  return TEST_DIAGNOSTICS;
 }
 
 export function getWarnings() {
@@ -151,6 +176,7 @@ export async function addWarning(message, meta = {}) {
     meta,
   };
   WARNINGS.push(entry);
+  recordDiagnostic({ severity: "warning", message, stackTrace: meta.error?.stack || "" });
   console.warn(`[WARNING] ${entry.time} ${contextPrefix()} - ${message}`);
   if (CURRENT_PAGE && !CURRENT_PAGE.isClosed()) {
     await showDiagnosticOverlay(CURRENT_PAGE, "WARNING", message, CURRENT_TC, CURRENT_STEP);
@@ -173,6 +199,7 @@ export async function addError(message, meta = {}) {
     meta,
   };
   ERRORS.push(entry);
+  recordDiagnostic({ severity: "error", message, stackTrace: meta.error?.stack || "" });
   console.error(`[ERROR] ${entry.time} ${contextPrefix()} - ${message}`);
   if (CURRENT_PAGE && !CURRENT_PAGE.isClosed()) {
     await showDiagnosticOverlay(CURRENT_PAGE, "ERROR", message, CURRENT_TC, CURRENT_STEP);
@@ -197,6 +224,12 @@ export async function captureTestFailure(page, testInfo) {
     meta: { step: CURRENT_STEP || "test execution", status: testInfo.status },
   };
   ERRORS.push(entry);
+  recordDiagnostic({
+    severity: "error",
+    message: reason,
+    stackTrace: testInfo.error?.stack || "",
+    source: "playwright-test",
+  });
   console.error(`[FAIL] ${entry.time} ${contextPrefix()} - ${reason}`);
   if (!page || page.isClosed()) return;
 

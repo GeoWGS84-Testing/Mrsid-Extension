@@ -151,6 +151,17 @@ export class MapPage {
 
     // Draw ONE tight box (leaflet-geo-rect when possible so it tracks pan/zoom)
     const highlighted = await this._drawRasterHighlightBox(pixelState);
+    if (!highlighted.boxDrawn) {
+      await addError("Raster is rendered but its highlight could not be drawn", {
+        highlighted,
+        lastDiag,
+        pixelState,
+      });
+      await takeScreenshot(this.page, "raster-highlight-missing");
+      throw new Error(
+        `Raster rendered but highlight could not be drawn: ${JSON.stringify({ highlighted, lastDiag, pixelState })}`
+      );
+    }
 
     // Keep left control card above map
     await this.page.evaluate(() => {
@@ -170,14 +181,6 @@ export class MapPage {
       diag: lastDiag,
       pixelState,
     });
-
-    if (!highlighted.boxDrawn) {
-      await addWarning("Raster present but highlight box could not be drawn", {
-        highlighted,
-        lastDiag,
-        pixelState,
-      });
-    }
 
     return highlighted;
   }
@@ -1147,11 +1150,19 @@ export class MapPage {
 
     // Always redraw from current inspect so mode stays leaflet-geo-rect when possible
     const pixels = await this._inspectRasterPixels();
+    let highlighted = null;
     if (pixels && pixels.rendered) {
-      await this._drawRasterHighlightBox(pixels);
+      highlighted = await this._drawRasterHighlightBox(pixels);
     } else if (filename) {
-      await highlightRasterRegion(this.page, { filename, holdMs: 0 });
+      highlighted = await highlightRasterRegion(this.page, { filename, holdMs: 0 });
     }
+    if (highlighted && !highlighted.boxDrawn) {
+      const diagnostics = await this.getRenderDiagnostics().catch(() => ({}));
+      await addError("Raster highlight redraw failed", { filename, highlighted, diagnostics });
+      await takeScreenshot(this.page, "raster-highlight-redraw-failed");
+      throw new Error(`Raster highlight redraw failed: ${JSON.stringify({ filename, highlighted, diagnostics })}`);
+    }
+    return highlighted;
   }
 
   async closeMetadataPanel() {

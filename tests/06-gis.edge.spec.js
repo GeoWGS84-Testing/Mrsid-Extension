@@ -65,7 +65,7 @@ test.describe("GIS edge cases @p1 @gis @upload @map", () => {
     });
 
     await mapPage.ensureControlCardVisible();
-    await mapPage.refreshRasterHighlight(base).catch(() => {});
+    await mapPage.refreshRasterHighlight(base);
 
     if (loc) {
       await mapPage.assertRasterMappedCorrectly(

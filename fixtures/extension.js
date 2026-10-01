@@ -9,14 +9,39 @@ import {
   captureTestFailure,
   clearDiagnostics,
   getWarnings,
+  beginTestDiagnostics,
+  getTestDiagnostics,
+  recordDiagnostic,
 } from "../utils/helpers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, "..", "extension");
+const CLEANUP_TIMEOUT_MS = Number(process.env.PW_CLEANUP_TIMEOUT_MS) || 15_000;
 
-/**
- * Resolve absolute path and verify the unpacked extension exists.
- */
+async function bestEffortCleanup(label, operation, timeoutMs = CLEANUP_TIMEOUT_MS) {
+  let timer;
+  try {
+    await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} exceeded ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+    return true;
+  } catch (error) {
+    recordDiagnostic({
+      severity: "error",
+      message: `${label}: ${error.message || String(error)}`,
+      stackTrace: error.stack || "",
+      source: "playwright-cleanup",
+    });
+    console.warn(`[PLAYWRIGHT CLEANUP] ${label}: ${error.message || String(error)}`);
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function resolveExtensionRoot() {
   const candidates = [
     EXTENSION_PATH,
@@ -24,86 +49,52 @@ function resolveExtensionRoot() {
     path.resolve(process.cwd(), "MrSid_Extension_V1.8"),
   ];
   for (const candidate of candidates) {
-    const manifest = path.join(candidate, "manifest.json");
-    if (fs.existsSync(manifest)) {
-      // Playwright / Chromium need a real absolute path (no trailing slash issues)
+    if (fs.existsSync(path.join(candidate, "manifest.json"))) {
       return path.resolve(candidate);
     }
   }
   throw new Error(
     `Unpacked extension not found. Looked for manifest.json under:\n` +
-      candidates.map((c) => `  - ${c}`).join("\n") +
-      `\nCopy Frontend_V1.8/MrSid_Extension_V1.8 into ./extension`
+      candidates.map((candidate) => `  - ${candidate}`).join("\n") +
+      "\nCopy Frontend_V1.8/MrSid_Extension_V1.8 into ./extension"
   );
 }
 
-/**
- * Wait until the MV3 service worker (or legacy background page) appears,
- * then return the extension id (hostname of chrome-extension:// URL).
- *
- * Headless Chromium often never starts extension SWs — use headed mode.
- */
 async function getExtensionId(context, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
-
   while (Date.now() < deadline) {
-    // MV3 service worker
-    for (const sw of context.serviceWorkers()) {
-      const url = sw.url();
-      if (url.startsWith("chrome-extension://")) {
-        return new URL(url).hostname;
+    for (const worker of context.serviceWorkers()) {
+      if (worker.url().startsWith("chrome-extension://")) {
+        return new URL(worker.url()).hostname;
       }
     }
-    // MV2 background page fallback
     for (const page of context.backgroundPages()) {
-      const url = page.url();
-      if (url.startsWith("chrome-extension://")) {
-        return new URL(url).hostname;
+      if (page.url().startsWith("chrome-extension://")) {
+        return new URL(page.url()).hostname;
       }
     }
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
-  // Last attempt: event-based wait
   try {
-    const sw = await context.waitForEvent("serviceworker", { timeout: 5_000 });
-    if (sw.url().startsWith("chrome-extension://")) {
-      return new URL(sw.url()).hostname;
+    const worker = await context.waitForEvent("serviceworker", { timeout: 5_000 });
+    if (worker.url().startsWith("chrome-extension://")) {
+      return new URL(worker.url()).hostname;
     }
   } catch {
     /* fall through */
   }
 
   throw new Error(
-    "Chrome extension service worker did not start within " +
-      `${timeoutMs}ms.\n` +
-      "Common causes on Windows:\n" +
-      "  1. Tests ran headless — extensions need headed Chromium (HEADLESS=false).\n" +
-      "  2. Extension folder missing or has no manifest.json.\n" +
-      "  3. Path to extension is wrong (must be absolute).\n" +
+    `Chrome extension service worker did not start within ${timeoutMs}ms. ` +
       `Resolved extension path: ${resolveExtensionRoot()}`
   );
 }
 
-/**
- * Launch Chromium with the unpacked MrSID Viewer extension.
- * Defaults to HEADED mode because headless often skips extension SWs on Windows.
- */
 async function launchExtensionContext(videoDir) {
   const extensionRoot = resolveExtensionRoot();
-  const userDataDir = await fs.promises.mkdtemp(
-    path.join(os.tmpdir(), "pw-mrsid-")
-  );
-
-  // Headless breaks extension loading on many Playwright + Windows setups.
-  // Override with HEADLESS=true only if you know your environment supports it.
-  const headless =
-    process.env.HEADLESS === "true"
-      ? true
-      : process.env.HEADLESS === "false"
-        ? false
-        : false; // default headed
-
+  const userDataDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pw-mrsid-"));
+  const headless = process.env.HEADLESS === "true";
   const args = [
     `--disable-extensions-except=${extensionRoot}`,
     `--load-extension=${extensionRoot}`,
@@ -117,75 +108,211 @@ async function launchExtensionContext(videoDir) {
   /** @type {import('@playwright/test').LaunchPersistentContextOptions} */
   const options = {
     headless,
+    timeout: Number(process.env.PW_BROWSER_LAUNCH_TIMEOUT_MS) || 180_000,
     args,
     ignoreDefaultArgs: ["--disable-extensions"],
     viewport: null,
     recordVideo: { dir: videoDir },
-    // Prefer system Chrome when available (better extension support on Windows)
     ...(process.env.PW_CHANNEL
       ? { channel: process.env.PW_CHANNEL }
       : process.platform === "win32"
         ? { channel: "chromium" }
         : {}),
   };
+  if (process.env.USE_SYSTEM_CHROME === "true") options.channel = "chrome";
 
-  // channel: "chrome" uses installed Google Chrome if present
-  if (process.env.USE_SYSTEM_CHROME === "true") {
-    options.channel = "chrome";
+  try {
+    const context = await chromium.launchPersistentContext(userDataDir, options);
+    context._mrsidUserDataDir = userDataDir;
+    return { context, extensionRoot, userDataDir };
+  } catch (error) {
+    await bestEffortCleanup("remove failed browser profile", () =>
+      fs.promises.rm(userDataDir, { recursive: true, force: true })
+    );
+    throw error;
   }
-
-  const context = await chromium.launchPersistentContext(userDataDir, options);
-
-  // Attach cleanup of temp profile
-  context._mrsidUserDataDir = userDataDir;
-
-  return { context, extensionRoot, userDataDir };
 }
 
-/**
- * Playwright fixture: loads unpacked extension, resolves ID, exposes page objects.
- *
- * Usage:
- *   import { test, expect } from "../fixtures/extension.js";
- */
+async function persistShardDiagnostics() {
+  const shard = String(Number(process.env.SHARD) || 0).padStart(2, "0");
+  const diagnosticsDir = path.resolve(process.env.PW_DIAGNOSTICS_DIR || "diagnostics");
+  const diagnosticsPath = path.join(diagnosticsDir, `shard-${shard}.json`);
+  await fs.promises.mkdir(path.dirname(diagnosticsPath), { recursive: true });
+  let existing = [];
+  try {
+    existing = JSON.parse(await fs.promises.readFile(diagnosticsPath, "utf8"));
+  } catch {
+    /* first test in this shard */
+  }
+  const temporaryPath = `${diagnosticsPath}.${process.pid}.tmp`;
+  await fs.promises.writeFile(temporaryPath, JSON.stringify([...existing, ...getTestDiagnostics()], null, 2));
+  await fs.promises.rename(temporaryPath, diagnosticsPath);
+}
+
 export const test = base.extend({
   context: async ({}, use, testInfo) => {
     const videoDir = testInfo.outputPath("recorded-videos");
     await fs.promises.mkdir(videoDir, { recursive: true });
     clearDiagnostics();
-    const { context, userDataDir } = await launchExtensionContext(videoDir);
+    beginTestDiagnostics(testInfo.titlePath.join(" › "));
+
+    let launched;
+    try {
+      launched = await launchExtensionContext(videoDir);
+    } catch (error) {
+      recordDiagnostic({
+        severity: "error",
+        message: error.message || String(error),
+        stackTrace: error.stack || "",
+        source: "browser-launch",
+      });
+      await persistShardDiagnostics();
+      throw error;
+    }
+    const { context, userDataDir } = launched;
+    const pendingMemorySnapshots = new Set();
+    const videos = new Set();
     const failure = () => ["failed", "timedOut"].includes(testInfo.status);
-    const videos = context.pages()
-      .map((page) => page.video())
-      .filter(Boolean);
+
+    const captureMemory = (page, phase) => {
+      if (page.isClosed()) return;
+      let task;
+      task = (async () => {
+        const session = await context.newCDPSession(page);
+        try {
+          await session.send("Performance.enable");
+          const { metrics } = await session.send("Performance.getMetrics");
+          const values = Object.fromEntries(
+            metrics
+              .filter((metric) => ["JSHeapUsedSize", "JSHeapTotalSize", "Nodes", "Documents"].includes(metric.name))
+              .map((metric) => [metric.name, metric.value])
+          );
+          recordDiagnostic({
+            severity: "info",
+            message: JSON.stringify({ phase, url: page.url(), ...values }),
+            source: "browser-memory",
+          });
+        } finally {
+          await session.detach().catch(() => {});
+        }
+      })()
+        .catch((error) => recordDiagnostic({
+          severity: "info",
+          message: `Memory snapshot unavailable (${phase}): ${error.message}`,
+          source: "browser-memory",
+        }))
+        .finally(() => pendingMemorySnapshots.delete(task));
+      pendingMemorySnapshots.add(task);
+    };
+
+    const collectPage = (page) => {
+      const video = page.video();
+      if (video) videos.add(video);
+      page.on("console", (message) => {
+        const type = message.type();
+        recordDiagnostic({
+          severity: type === "error" ? "error" : ["warning", "warn"].includes(type) ? "warning" : "info",
+          message: message.text(),
+          source: `browser-console:${type}`,
+        });
+      });
+      page.on("pageerror", (error) => recordDiagnostic({
+        severity: "error", message: error.message, stackTrace: error.stack, source: "pageerror",
+      }));
+      page.on("crash", () => recordDiagnostic({
+        severity: "error", message: `Page crashed: ${page.url()}`, source: "page-crash",
+      }));
+      page.on("requestfailed", (request) => recordDiagnostic({
+        severity: "error",
+        message: `${request.method()} ${request.url()} failed: ${request.failure()?.errorText || "unknown network error"}`,
+        source: "network-request",
+      }));
+      page.on("response", (response) => {
+        if (response.status() >= 400) recordDiagnostic({
+          severity: "error",
+          message: `${response.status()} ${response.request().method()} ${response.url()}`,
+          source: "http-response",
+        });
+      });
+    };
+
+    context.pages().forEach((page) => {
+      collectPage(page);
+      captureMemory(page, "page-open");
+    });
+    context.on("page", (page) => {
+      collectPage(page);
+      captureMemory(page, "page-open");
+    });
+
+    const collectServiceWorker = (worker) => {
+      worker.on("console", (message) => recordDiagnostic({
+        severity: message.type() === "error" ? "error" : ["warning", "warn"].includes(message.type()) ? "warning" : "info",
+        message: message.text(),
+        source: "extension-console",
+      }));
+    };
+    context.serviceWorkers().forEach(collectServiceWorker);
+    context.on("serviceworker", collectServiceWorker);
+    await context.tracing.start({ screenshots: true, snapshots: true, sources: true }).catch((error) => {
+      recordDiagnostic({ severity: "warning", message: error.message, source: "playwright-trace" });
+    });
+
     try {
       await use(context);
     } finally {
       if (failure()) {
         const page = context.pages().filter((candidate) => !candidate.isClosed()).at(-1);
-        await captureTestFailure(page, testInfo).catch(() => {});
+        await bestEffortCleanup("capture failure evidence", () => captureTestFailure(page, testInfo));
       }
-      await context.close().catch(() => {});
-      if (getWarnings().length > 0 || failure()) {
-        for (const [index, video] of videos.entries()) {
-          try {
-            const file = testInfo.outputPath(`video-${index + 1}.webm`);
-            await video.saveAs(file);
-            await testInfo.attach(`browser-video-${index + 1}`, {
-              path: file,
-              contentType: "video/webm",
-            });
-          } catch {
-            /* video may be unavailable if Chromium exited unexpectedly */
+      for (const page of context.pages()) captureMemory(page, "test-end");
+      await bestEffortCleanup(
+        "collect memory snapshots",
+        () => Promise.allSettled([...pendingMemorySnapshots]),
+        Math.min(CLEANUP_TIMEOUT_MS, 5_000)
+      );
+
+      const tracePath = testInfo.outputPath("trace.zip");
+      if (failure() || testInfo.retry > 0) {
+        const saved = await bestEffortCleanup("save trace", () =>
+          context.tracing.stop({ path: tracePath })
+        );
+        if (saved) {
+          await bestEffortCleanup("attach trace", () =>
+            testInfo.attach("trace", { path: tracePath, contentType: "application/zip" })
+          );
+        }
+      } else {
+        await bestEffortCleanup("stop trace", () => context.tracing.stop());
+      }
+
+      const closed = await bestEffortCleanup("close browser context", () => context.close());
+      if (!closed) {
+        await bestEffortCleanup("force close browser", () => context.browser()?.close());
+      }
+
+      if (getWarnings().length > 0 || failure() || testInfo.retry > 0) {
+        for (const [index, video] of [...videos].entries()) {
+          const file = testInfo.outputPath(`video-${index + 1}.webm`);
+          const saved = await bestEffortCleanup(
+            `save video ${index + 1}`,
+            () => video.saveAs(file),
+            Math.max(CLEANUP_TIMEOUT_MS, 30_000)
+          );
+          if (saved) {
+            await bestEffortCleanup(`attach video ${index + 1}`, () =>
+              testInfo.attach(`browser-video-${index + 1}`, { path: file, contentType: "video/webm" })
+            );
           }
         }
       }
-      // Best-effort cleanup of temp profile
-      try {
-        await fs.promises.rm(userDataDir, { recursive: true, force: true });
-      } catch {
-        /* ignore locked files on Windows */
-      }
+
+      await persistShardDiagnostics();
+      await bestEffortCleanup(
+        "remove browser profile",
+        () => fs.promises.rm(userDataDir, { recursive: true, force: true }),
+        5_000
+      );
     }
   },
 
@@ -195,11 +322,8 @@ export const test = base.extend({
   },
 
   popupPage: async ({ context, extensionId }, use) => {
-    // Reuse first blank page if present, otherwise open a new one
-    const page =
-      context.pages().find((p) => !p.isClosed()) ?? (await context.newPage());
-    const popup = new PopupPage(page, extensionId);
-    await use(popup);
+    const page = context.pages().find((candidate) => !candidate.isClosed()) ?? await context.newPage();
+    await use(new PopupPage(page, extensionId));
   },
 
   mapPageFactory: async ({ context, extensionId }, use) => {
