@@ -414,8 +414,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     async function performParallelUpload(file) {
-        const CHUNK_SIZE = 20 * 1024 * 1024; // 20MB per chunk for reliability
-        const CONCURRENCY_PER_ORIGIN = 6;     // Browser limit per host
+        // Slightly larger chunks + lower concurrency = fewer requests and more stable sessions on CI.
+        const CHUNK_SIZE = 32 * 1024 * 1024; // 32MB
+        const CONCURRENCY_PER_ORIGIN = 3;
 
         let HOSTS = [backendUrl];
         if (backendUrl.includes("127.0.0.1")) {
@@ -425,17 +426,50 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        let initLock = Promise.resolve();
 
         statusValue.textContent = `Vortex Engine: Initializing...`;
 
+        async function initUploadSession() {
+            const initRes = await fetch(`${HOSTS[0]}/init_upload`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ filename: file.name, size: file.size })
+            });
+            const initData = await initRes.json().catch(() => ({}));
+            if (!initRes.ok || initData.error) {
+                throw new Error(initData.error || `init_upload failed HTTP ${initRes.status}`);
+            }
+            return initData;
+        }
+
         // 1. Initialize Upload (Pre-allocation)
-        const initRes = await fetch(`${HOSTS[0]}/init_upload`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filename: file.name, size: file.size })
-        });
-        const initData = await initRes.json();
-        if (initData.error) throw new Error(initData.error);
+        await initUploadSession();
+
+        function isSessionLostError(message) {
+            const msg = String(message || "").toLowerCase();
+            return (
+                msg.includes("upload not initialized") ||
+                msg.includes("session") && msg.includes("not") ||
+                msg.includes("no upload") ||
+                msg.includes("unknown upload")
+            );
+        }
+
+        // Serialize re-init so parallel workers do not stampede the server.
+        async function ensureUploadSession(reason) {
+            const prev = initLock;
+            let release;
+            initLock = new Promise((r) => { release = r; });
+            await prev;
+            try {
+                console.warn(`[upload] Re-init session (${reason})`);
+                statusValue.textContent = "Vortex Engine: Re-initializing session...";
+                await initUploadSession();
+            } finally {
+                release();
+            }
+        }
 
         // 2. Upload Chunks in Parallel across multiple origins
         let uploadedChunks = 0;
@@ -452,10 +486,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                 return fd;
             };
 
-            // Round-robin between 127.0.0.1 and localhost to hit 12 concurrent streams
             const host = HOSTS[index % HOSTS.length];
 
-            // ✅ NEW: Automatic retry with exponential backoff (ported from the 372-line version)
             try {
                 const res = await fetch(`${host}/upload_chunk`, {
                     method: "POST",
@@ -467,21 +499,24 @@ document.addEventListener("DOMContentLoaded", async () => {
                 }
             } catch (err) {
                 console.warn(`Chunk ${index} failed, retrying...`, err);
-                await retryChunk(host, buildFormData, index);
+                await retryChunk(host, buildFormData, index, {
+                    retries: 5,
+                    onSessionLost: () => ensureUploadSession(`chunk ${index}`),
+                    isSessionLostError,
+                });
             }
 
             uploadedChunks++;
             const progress = Math.round((uploadedChunks / totalChunks) * 100);
-            const speedMbps = ((uploadedChunks * CHUNK_SIZE) / (1024 * 1024) / ((Date.now() - startTime) / 1000)).toFixed(1);
+            const elapsedSec = Math.max(0.001, (Date.now() - startTime) / 1000);
+            const speedMbps = ((uploadedChunks * CHUNK_SIZE) / (1024 * 1024) / elapsedSec).toFixed(1);
 
-            // ✅ NEW: Update the visual progress bar alongside the status text
             if (progressBar) progressBar.value = progress;
             if (progressText) progressText.textContent = `${progress}%`;
 
             statusValue.textContent = `Vortex Engine: ${progress}% (${speedMbps} MB/s)`;
         };
 
-        // Execution Pool (12 parallel streams)
         const queue = Array.from({ length: totalChunks }, (_, i) => i);
         const totalConcurrency = CONCURRENCY_PER_ORIGIN * HOSTS.length;
         const workers = Array(Math.min(totalConcurrency, totalChunks)).fill(null).map(async () => {
@@ -495,20 +530,40 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // 3. Finalize and Process Metadata
         statusValue.textContent = "Processing Massive Metadata...";
-        const compRes = await fetch(`${HOSTS[0]}/complete_upload`, {
+        let compRes = await fetch(`${HOSTS[0]}/complete_upload`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ filename: file.name })
         });
-        return await compRes.json();
+        let compData = await compRes.json().catch(() => ({}));
+
+        // If complete fails because session was lost, re-init is useless for already-uploaded
+        // chunks — surface a clear error instead of a generic failure.
+        if (!compRes.ok || compData.error) {
+            throw new Error(compData.error || `complete_upload failed HTTP ${compRes.status}`);
+        }
+        return compData;
     }
 
-    // ✅ NEW: Retry failed chunk with exponential backoff (ported from the 372-line version)
-    async function retryChunk(host, buildFormData, index, retries = 3) {
+    /**
+     * Retry a failed chunk with exponential backoff.
+     * On "Upload not initialized" (and similar), re-init the upload session once per attempt.
+     */
+    async function retryChunk(host, buildFormData, index, options = {}) {
+        const retries = options.retries ?? 5;
+        const onSessionLost = options.onSessionLost;
+        const isSessionLostError = options.isSessionLostError || (() => false);
         let lastError = "unknown response";
+
         for (let attempt = 0; attempt < retries; attempt++) {
             try {
-                await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, attempt)));
+                // 200ms, 400ms, 800ms, 1600ms, 3200ms
+                await new Promise((resolve) => setTimeout(resolve, 200 * Math.pow(2, attempt)));
+
+                if (isSessionLostError(lastError) && typeof onSessionLost === "function") {
+                    await onSessionLost();
+                }
+
                 const res = await fetch(`${host}/upload_chunk`, {
                     method: "POST",
                     body: buildFormData()
