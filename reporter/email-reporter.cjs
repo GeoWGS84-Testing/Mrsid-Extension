@@ -1,3 +1,4 @@
+
 require("dotenv/config");
 const fs = require("fs");
 const path = require("path");
@@ -16,6 +17,9 @@ function resolveLogoPath() {
 const LOGO_PATH = resolveLogoPath();
 const LOGO_CID = "logo_cid";
 
+// Extension project identity (no external product URL required for extension QA)
+const PROJECT_NAME = process.env.PROJECT_NAME || "MrSID Viewer Extension";
+const PROJECT_SUBTITLE = process.env.PROJECT_SUBTITLE || "Chrome Extension · Playwright E2E";
 const REPORT_TIMEZONE = process.env.REPORT_TIMEZONE || "Asia/Kolkata";
 
 const DIAG_DIR = path.join(process.cwd(), "diagnostics");
@@ -583,7 +587,7 @@ function buildHeader(logoCid) {
     <table width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.navy};">
         <tr>
             <td align="center" style="padding:30px 20px 0 20px;" class="r-header-pad">
-                <img src="cid:${logoCid}" alt="Lizardtech" width="56" style="width:56px; height:auto; border:0; border-radius:10px; display:block;" />
+                <img src="cid:${logoCid}" alt="${PROJECT_NAME}" width="56" style="width:56px; height:auto; border:0; border-radius:10px; display:block;" />
             </td>
         </tr>
         <tr>
@@ -594,13 +598,13 @@ function buildHeader(logoCid) {
         <tr>
             <td align="center" style="padding:6px 20px 0 20px;">
                 <h1 class="r-title" style="margin:0; font-family:'Segoe UI',Arial,sans-serif; font-size:20px; font-weight:700; color:#FFFFFF; letter-spacing:0.2px;">
-                    Mrsid Viewer Extension
+                    ${PROJECT_NAME}
                 </h1>
             </td>
         </tr>
         <tr>
             <td align="center" style="padding:6px 20px 0 20px;">
-                <a href="${TARGET_URL}" class="r-url" style="font-family:'Segoe UI',Arial,sans-serif; font-size:11px; color:#93C5FD; text-decoration:none;">${TARGET_URL.replace(/^https?:\/\//, "")}</a>
+                <div class="r-url" style="font-family:'Segoe UI',Arial,sans-serif; font-size:11px; color:#93C5FD;">${PROJECT_SUBTITLE}</div>
             </td>
         </tr>
         <tr>
@@ -770,8 +774,8 @@ function buildFooter() {
   return `
     <table width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.navy};">
         <tr><td style="height:1px; line-height:1px; font-size:1px; background:${BRAND.teal};">&nbsp;</td></tr>
-        <tr><td align="center" style="padding:18px 20px 4px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:11px; color:#E2E8F0; font-weight:600;">MrSID Viewer Extension QA</td></tr>
-        <tr><td align="center" style="padding:0 20px 2px 20px;"><a href="${TARGET_URL}" style="font-family:'Segoe UI',Arial,sans-serif; font-size:9px; color:#93C5FD; text-decoration:none;">${TARGET_URL}</a></td></tr>
+        <tr><td align="center" style="padding:18px 20px 4px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:11px; color:#E2E8F0; font-weight:600;">${PROJECT_NAME} QA</td></tr>
+        <tr><td align="center" style="padding:0 20px 2px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:9px; color:#93C5FD;">${PROJECT_SUBTITLE}</td></tr>
         <tr><td align="center" style="padding:6px 20px 4px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:9px; color:#8CA0B8; letter-spacing:1px;" class="r-footer">AUTOMATED E2E &nbsp;·&nbsp; PLAYWRIGHT &nbsp;·&nbsp; NODE.JS</td></tr>
         <tr><td align="center" style="padding:4px 20px 18px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:8px; color:#5E7391;" class="r-footer">This is an automated message — please do not reply.</td></tr>
     </table>`;
@@ -1237,12 +1241,12 @@ class EmailReporter {
 
       const subject =
         this.stats.failed > 0
-          ? `[MrSID Viewer Extension QA] ${this.stats.failed} Failed · ${this.stats.warning_tests} Warnings · ${this.stats.skipped_logic_tests} Skipped`
+          ? `[${PROJECT_NAME} QA] ${this.stats.failed} Failed · ${this.stats.warning_tests} Warnings · ${this.stats.skipped_logic_tests} Skipped`
           : this.stats.warning_tests > 0
-            ? `[MrSID Viewer Extension QA] ${this.stats.warning_tests} Warnings · ${this.stats.skipped_logic_tests} Skipped`
+            ? `[${PROJECT_NAME} QA] ${this.stats.warning_tests} Warnings · ${this.stats.skipped_logic_tests} Skipped`
             : this.stats.skipped_logic_tests > 0 || this.stats.skipped > 0
-              ? `[MrSID Viewer Extension QA] ${this.stats.skipped_logic_tests} Skipped Steps`
-              : `[MrSID Viewer Extension QA] All ${this.stats.passed} Tests Passed`;
+              ? `[${PROJECT_NAME} QA] ${this.stats.skipped_logic_tests} Skipped Steps`
+              : `[${PROJECT_NAME} QA] All ${this.stats.passed} Tests Passed`;
 
       const html = wrapBody(`
                 ${buildHeader(LOGO_CID)}
@@ -1313,7 +1317,7 @@ class EmailReporter {
         .map((item, idx) => buildTestRow(item, addAttachment, idx))
         .join("");
 
-      const subject = `[MrSID Viewer Extension QA] Detailed Report — ${this.stats.passed} Passed, ${this.stats.failed} Failed, ${this.stats.warning_tests} Warnings, ${this.stats.skipped_logic_tests} Skipped`;
+      const subject = `[${PROJECT_NAME} QA] Detailed Report — ${this.stats.passed} Passed, ${this.stats.failed} Failed, ${this.stats.warning_tests} Warnings, ${this.stats.skipped_logic_tests} Skipped`;
 
       const html = wrapBody(`
                 ${buildHeader(LOGO_CID)}
@@ -1395,18 +1399,33 @@ class EmailReporter {
         cid: LOGO_CID,
         contentDisposition: "inline",
       });
+      console.log(`[REPORTER] Logo attached from ${LOGO_PATH}`);
     } else {
-      console.warn(`⚠️ Logo not found at ${LOGO_PATH} (also checked extension/logo.png)`);
+      console.warn(`⚠️ Logo not found at ${LOGO_PATH}`);
     }
 
-    return transporter.sendMail({
-      from: smtpFrom,
-      to: recipients,
-      subject,
-      text,
-      html,
-      attachments: finalAttachments,
-    });
+    console.log(
+      `[REPORTER] Sending mail via ${smtpHost}:${smtpPort} (secure=${smtpSecure}) from=${smtpFrom} to=${recipients}`
+    );
+
+    try {
+      const info = await transporter.sendMail({
+        from: smtpFrom,
+        to: recipients,
+        subject,
+        text,
+        html,
+        attachments: finalAttachments,
+      });
+      console.log(`[REPORTER] Mail accepted: ${info.messageId || "ok"}`);
+      return info;
+    } catch (err) {
+      // Surface a clean, non-secret error for CI logs
+      const code = err.code || err.responseCode || "";
+      const msg = err.message || String(err);
+      console.error(`[REPORTER] SMTP send failed code=${code} host=${smtpHost} msg=${msg}`);
+      throw err;
+    }
   }
 }
 
