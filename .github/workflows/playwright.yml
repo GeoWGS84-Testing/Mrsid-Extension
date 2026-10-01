@@ -67,12 +67,11 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const currentRunId = context.runId;
-
-            const workflowName = context.workflow.split("/").pop();
-            const workflowId = context.workflow_ref.split("/").pop();
-
+      
+            const workflowName = context.workflow;
+      
             core.info(`Current workflow: ${workflowName}`);
-
+      
             const workflows = await github.paginate(
               github.rest.actions.listRepoWorkflows,
               {
@@ -81,11 +80,10 @@ jobs:
                 per_page: 100,
               }
             );
-
+      
             const workflow = workflows.find(
               (wf) => wf.name === workflowName
             );
-
             if (!workflow) {
               core.warning(
                 `Workflow not found: ${workflowName}`
