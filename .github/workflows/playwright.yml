@@ -1,5 +1,9 @@
 name: 🎭 Playwright Tests - MrSID Viewer Extension
 
+permissions:
+  actions: write
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -37,62 +41,86 @@ env:
   DEFAULT_WORKERS: "1"
   MIN_EXPECTED_TESTS: "55"
 
-  # Bump whenever any external fixture or its Drive ID changes.
   FIXTURE_CACHE_VERSION: "v2"
 
   DRIVE_MULTI_FILE_1_1: "1WQ8X5E0resIr1MQT9OxtgHI4CwILu-xO"
   DRIVE_LARGE_1GB: "1WaxD-XaPU8lTbEUflrnKdfyr6jCny123"
   DRIVE_LARGE_1_3GB: "1uxqHpJ1UvRoehvc7Qr3iGzz71KAl84UT"
-
-  # Correct ID from:
-  # https://drive.google.com/file/d/188Zhju97yGKYLpA-shobecd_We7DYbOw/view
   DRIVE_LARGE_1_69GB: "188Zhju97yGKYLpA-shobecd_We7DYbOw"
 
   DRIVE_VALID_GEOTIF: "1uQjobUyiGCqPtJaJKNcTN-gcjW1dn0cY"
   DRIVE_VALID_GEOTIFF: "1WsnRDjSQmK7DlRLK5VJmWgbZtA-_Q5BP"
 
+
 jobs:
+
   cleanup-previous:
     name: "🧹 Delete old completed workflow runs"
     runs-on: ubuntu-24.04
     continue-on-error: true
+
     steps:
       - name: "🗑️ Delete previous completed runs of THIS workflow"
         uses: actions/github-script@v9
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
         with:
           script: |
-            const workflowRef = process.env.WORKFLOW_REF || "";
-            const match = workflowRef.match(/\.github\/workflows\/([^@]+)@/);
-
-            if (!match) {
-              await core.summary
-                .addHeading("🧹 Previous Run Cleanup")
-                .addRaw("Workflow file could not be determined. No previous runs were deleted.")
-                .write();
-              return;
-            }
-
-            const workflowFile = match[1];
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const currentRunId = context.runId;
+
+            const workflowName = context.workflow.split("/").pop();
+            const workflowId = context.workflow_ref.split("/").pop();
+
+            core.info(`Current workflow: ${workflowName}`);
+
+            const workflows = await github.paginate(
+              github.rest.actions.listRepoWorkflows,
+              {
+                owner,
+                repo,
+                per_page: 100,
+              }
+            );
+
+            const workflow = workflows.find(
+              (wf) => wf.name === workflowName
+            );
+
+            if (!workflow) {
+              core.warning(
+                `Workflow not found: ${workflowName}`
+              );
+
+              await core.summary
+                .addHeading("🧹 Previous Run Cleanup")
+                .addRaw(
+                  `Workflow not found: ${workflowName}`
+                )
+                .write();
+
+              return;
+            }
 
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRuns,
               {
                 owner,
                 repo,
-                workflow_id: workflowFile,
+                workflow_id: workflow.id,
                 status: "completed",
                 per_page: 100,
               }
             );
 
             const previousRuns = runs
-              .filter((run) => run.id !== currentRunId)
-              .sort((a, b) => b.id - a.id);
+            .filter(
+              (run) => run.id !== currentRunId
+            )
+            .sort(
+              (a, b) =>
+                new Date(b.created_at) - new Date(a.created_at)
+            )
+            .slice(5);
 
             let deleted = 0;
             let failed = 0;
@@ -104,20 +132,45 @@ jobs:
                   repo,
                   run_id: run.id,
                 });
+
                 deleted++;
+
+                core.info(
+                  `Deleted run #${run.run_number}`
+                );
+
               } catch (error) {
                 failed++;
-                core.info(`Could not delete run #${run.run_number}: ${error.message}`);
+
+                core.warning(
+                  `Failed deleting run #${run.run_number}: ${error.message}`
+                );
               }
             }
 
             await core.summary
               .addHeading("🧹 Previous Run Cleanup")
               .addTable([
-                [{ data: "Metric", header: true }, { data: "Count", header: true }],
-                ["Previous completed runs found", String(previousRuns.length)],
-                ["Runs deleted", String(deleted)],
-                ["Deletion failures", String(failed)],
+                [
+                  { data: "Metric", header: true },
+                  { data: "Count", header: true }
+                ],
+                [
+                  "Workflow",
+                  workflowName
+                ],
+                [
+                  "Previous completed runs found",
+                  String(previousRuns.length)
+                ],
+                [
+                  "Runs deleted",
+                  String(deleted)
+                ],
+                [
+                  "Deletion failures",
+                  String(failed)
+                ]
               ])
               .write();
 
