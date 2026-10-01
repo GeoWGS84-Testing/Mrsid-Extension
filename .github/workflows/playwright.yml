@@ -681,6 +681,17 @@ jobs:
         run: |
           set +e
 
+          # Strip trailing newlines/spaces that GitHub Secrets UI sometimes injects.
+          # Prevents nodemailer DNS EBADNAME (hostname ending with \n).
+          export SMTP_HOST="$(echo -n "${SMTP_HOST:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          export SMTP_PORT="$(echo -n "${SMTP_PORT:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          export SMTP_USER="$(echo -n "${SMTP_USER:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          export SMTP_PASS="$(echo -n "${SMTP_PASS:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          export SMTP_FROM="$(echo -n "${SMTP_FROM:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          export SMTP_SECURE="$(echo -n "${SMTP_SECURE:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          export DAILY_REPORT_EMAILS="$(echo -n "${DAILY_REPORT_EMAILS:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+          export FAILURE_ALERT_EMAILS="$(echo -n "${FAILURE_ALERT_EMAILS:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
+
           npm run report:email
           EMAIL_EXIT=$?
 
