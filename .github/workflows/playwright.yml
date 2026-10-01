@@ -1,4 +1,4 @@
-name: Playwright Tests - GeoViewer Extension
+name: Playwright Tests - MrSID Viewer Extension
 
 on:
   push:
@@ -10,13 +10,18 @@ on:
   workflow_dispatch:
     inputs:
       workers:
-        description: Workers per shard
+        description: Workers per shard (1 recommended for extension tests)
         required: false
         default: "1"
         type: choice
         options: ["1", "2", "4"]
+      headless:
+        description: Run Chromium headless
+        required: false
+        default: false
+        type: boolean
       run_large_file_tests:
-        description: Download and run large-file fixtures
+        description: Download and run the three large raster fixtures
         required: false
         default: false
         type: boolean
@@ -40,7 +45,7 @@ concurrency:
 
 jobs:
   preflight:
-    name: Provision and validate inputs
+    name: Provision and validate test inputs
     runs-on: ubuntu-24.04
     env:
       RUN_LARGE_FILE_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_large_file_tests == true && '1' || '0' }}
@@ -59,12 +64,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Setup Python and Google Drive downloader
+      - name: Setup Python for Google Drive downloads
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Install gdown
+      - name: Install Google Drive downloader
         run: python -m pip install --disable-pip-version-check gdown==6.4.1
 
       - name: Validate extension and provision fixtures
@@ -141,10 +146,24 @@ jobs:
           npx playwright test --list --project=chromium-extension | tee "$RUNNER_TEMP/test-list.txt"
           discovered=$(sed -n 's/^Total: \([0-9][0-9]*\) tests.*/\1/p' "$RUNNER_TEMP/test-list.txt" | tail -n 1)
           if [[ ! "$discovered" =~ ^[0-9]+$ || "$discovered" -lt 55 ]]; then
-            echo "::error::Expected at least 55 discovered tests for chromium-extension; found '${discovered:-unknown}'."
+            echo "::error::Expected at least 55 chromium-extension tests; found '${discovered:-unknown}'."
             exit 1
           fi
           echo "Tests discovered: $discovered" >> "$GITHUB_STEP_SUMMARY"
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+
+          Additional MrSID fixture paths referenced by tests but not supplied above:
+          - `valid/01_NAIP_2014_WGS84.sid`
+          - `valid/NAIP_2014_WGS84_EPSG4326.sid`
+          - `valid/01_multi_file_set_1_1.sid`
+          - `invalid/non_georeferenced.sid`
+          - `corrupt/corrupt.sid`
+          - `boundary/tiny.sid`
+          - `boundary/VALID_UPPER_MrSID_Extension.SID`
+
+          Supply any available Drive IDs in the repository variable `GEOVIEWER_EXTRA_FIXTURE_IDS` as a JSON object keyed by these paths relative to `test-data/`. Missing optional fixtures continue to be skipped by the test suite.
+          SUMMARY
 
       - name: Upload provisioned fixtures
         uses: actions/upload-artifact@v7
@@ -193,10 +212,12 @@ jobs:
       - name: Run Playwright shard ${{ matrix.shard }}/8
         env:
           CI: "true"
-          HEADLESS: "false"
+          HEADLESS: ${{ github.event_name == 'workflow_dispatch' && inputs.headless == true && 'true' || 'false' }}
           PW_WORKERS: ${{ inputs.workers || '1' }}
           DEBUG: ${{ inputs.debug_mode == true && 'pw:api,pw:browser' || '' }}
           RUN_LARGE_FILE_TESTS: ${{ inputs.run_large_file_tests == true && '1' || '0' }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL || secrets.GEOVIEWER_BACKEND_URL || 'https://api.geowgs84.com' }}
+          GEOVIEWER_BACKEND_URL: ${{ secrets.GEOVIEWER_BACKEND_URL || secrets.BACKEND_URL || 'https://api.geowgs84.com' }}
           ENABLE_EMAIL_REPORTER: "false"
           VISUAL_STEP_DELAY_MS: "0"
           GEOVIEWER_VISUAL_DEMO: "0"
@@ -208,7 +229,7 @@ jobs:
             --workers="$PW_WORKERS" \
             --shard=${{ matrix.shard }}/8 2>&1 | tee "shard-${{ matrix.shard }}.log"
 
-      - name: Upload shard log and results
+      - name: Upload shard log and test results
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -309,15 +330,23 @@ jobs:
         if: steps.decision.outputs.send == 'true'
         run: npm ci
 
-      - name: Download shard reports
+      - name: Download diagnostics
+        if: steps.decision.outputs.send == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: test-results-*
+          merge-multiple: true
+          path: test-results
+
+      - name: Download Playwright blob reports
         if: steps.decision.outputs.send == 'true'
         uses: actions/download-artifact@v8
         with:
           pattern: blob-report-*
           merge-multiple: true
-          path: blob-reports
+          path: blob-report
 
-      - name: Send email report
+      - name: Send consolidated report
         if: steps.decision.outputs.send == 'true'
         env:
           CI: "true"
@@ -329,4 +358,4 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
-        run: npx playwright merge-reports --reporter=./reporter/email-reporter.cjs blob-reports
+        run: npm run report:email

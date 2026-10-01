@@ -97,25 +97,31 @@ Client-side rejection tests (03-*) do **not**.
 ## GitHub Actions
 
 The workflow at `.github/workflows/playwright.yml` runs the `chromium-extension`
-project in eight shards. It downloads the four Drive fixtures listed in the
-workflow; the three large fixtures are downloaded only when
-`run_large_file_tests` is enabled. These files stay out of Git because several
-are hundreds of megabytes or larger.
+project in eight shards. It downloads the four provided GeoTIFF fixtures on
+each run; the three large fixtures are downloaded only when
+`run_large_file_tests` is enabled. Large raster files are provisioned from
+Google Drive rather than committed to Git.
 
-Other Drive fixture IDs can be supplied in the repository variable
-`GEOVIEWER_EXTRA_FIXTURE_IDS` as a JSON object whose keys are paths relative to
-`test-data/`, for example `{"valid/01_NAIP_2014_WGS84.sid":"DRIVE_FILE_ID"}`.
-The test suite currently references these additional SID fixtures that are not
-among the Drive links provided: `valid/01_NAIP_2014_WGS84.sid`,
-`valid/NAIP_2014_WGS84_EPSG4326.sid`, `valid/UTM_georeferenced_MrSID.sid`,
-`valid/01_multi_file_set_1_1.sid`, `boundary/tiny.sid`,
-`boundary/VALID_UPPER_MrSID_Extension.SID`, `corrupt/corrupt.sid`, and
-`invalid/non_georeferenced.sid`. Tests needing an unavailable fixture skip.
+The tests also reference these MrSID fixtures, for which no Drive IDs were
+provided:
 
-The workflow requires a reachable `https://api.geowgs84.com` backend for upload
-and map tests. Optional email reports require the `SMTP_HOST`, `SMTP_USER`,
-`SMTP_PASS`, and at least one of `DAILY_REPORT_EMAILS` or
-`FAILURE_ALERT_EMAILS` repository secrets.
+- `valid/01_NAIP_2014_WGS84.sid`
+- `valid/NAIP_2014_WGS84_EPSG4326.sid`
+- `valid/01_multi_file_set_1_1.sid`
+- `invalid/non_georeferenced.sid`
+- `corrupt/corrupt.sid`
+- `boundary/tiny.sid`
+- `boundary/VALID_UPPER_MrSID_Extension.SID`
+
+Add any available Drive IDs as a JSON object in the repository variable
+`GEOVIEWER_EXTRA_FIXTURE_IDS`, keyed by paths relative to `test-data/`, for
+example `{"valid/01_NAIP_2014_WGS84.sid":"DRIVE_FILE_ID"}`. Tests that need
+fixtures not supplied by Git or this variable skip those cases.
+
+Upload and map tests require a reachable `https://api.geowgs84.com` backend;
+override it with the `BACKEND_URL` or `GEOVIEWER_BACKEND_URL` secret if needed.
+Optional email reports require `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, and at
+least one of `DAILY_REPORT_EMAILS` or `FAILURE_ALERT_EMAILS`.
 
 ## Primary flow steps (POM)
 
