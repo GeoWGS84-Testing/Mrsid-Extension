@@ -1,392 +1,2398 @@
-name: Playwright Tests - MrSID Viewer Extension
+# ══════════════════════════════════════════════════════════════════════════
+# 🎭 Playwright Test Suite — MrSID Viewer Extension
+#
+# COMPLETE SUITE EXECUTION
+#
+# Flow:
+#   1. Delete older COMPLETED runs of this workflow
+#   2. Checkout repository
+#   3. Prepare complete test-data directory
+#   4. Restore/download all external fixtures
+#   5. Cache external fixtures
+#   6. Run COMPLETE Playwright suite in 8 parallel shards
+#   7. Build/upload per-shard reports
+#   8. Build consolidated shard matrix
+#   9. Merge all blob reports into one HTML report
+#  10. Send DAILY_REPORT_EMAILS
+#  11. Send FAILURE_ALERT_EMAILS
+#  12. Finish
+#
+# IMPORTANT:
+#   - There is NO separate large-file job.
+#   - @large-file tests belong to the same Playwright suite.
+#   - Every shard receives the same test-data layout.
+#   - Each shard uses workers=1.
+#   - Parallelism is provided by 8 GitHub-hosted runners.
+# ══════════════════════════════════════════════════════════════════════════
+
+name: 🎭 Playwright Tests - MrSID Viewer Extension
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
+
+  # Daily at 1:00 PM IST / 07:30 UTC
   schedule:
     - cron: "30 7 * * *"
+
   workflow_dispatch:
     inputs:
-      workers:
-        description: Workers per shard (1 recommended for extension tests)
-        required: false
-        default: "1"
-        type: choice
-        options: ["1", "2", "4"]
       test_grep:
-        description: Filter tests by name or regex (blank runs all tests)
+        description: "🔍 Optional test filter / regex. Leave blank to run the complete suite."
         required: false
         default: ""
         type: string
+
       headless:
-        description: Run Chromium headless
+        description: "👻 Run Chromium headless"
         required: false
         default: false
         type: boolean
-      run_large_file_tests:
-        description: Download and run the three large raster fixtures
-        required: false
-        default: false
-        type: boolean
+
       send_report:
-        description: Send optional email report
+        description: "📧 Send DAILY_REPORT_EMAILS and FAILURE_ALERT_EMAILS"
         required: false
         default: true
         type: boolean
+
       debug_mode:
-        description: Enable Playwright debug logging
+        description: "🐛 Enable Playwright debug logging"
         required: false
         default: false
         type: boolean
 
+
+# ══════════════════════════════════════════════════════════════════════════
+# PERMISSIONS
+# ══════════════════════════════════════════════════════════════════════════
+
 permissions:
   contents: read
+  actions: write
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# CONCURRENCY
+#
+# Do not cancel an already running suite.
+#
+# A second run on the same branch/ref waits until the first run completes.
+# ══════════════════════════════════════════════════════════════════════════
 
 concurrency:
-  group: playwright-geoviewer-${{ github.workflow }}-${{ github.ref }}
+  group: mrsid-extension-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+
+# ══════════════════════════════════════════════════════════════════════════
+# GLOBAL ENVIRONMENT
+# ══════════════════════════════════════════════════════════════════════════
+
+env:
+  NODE_VERSION: "22"
+
+  PLAYWRIGHT_PROJECT: "chromium-extension"
+
+  TOTAL_SHARDS: "8"
+
+  # Keep one extension worker per runner.
+  DEFAULT_WORKERS: "1"
+
+  # Raise this only when your actual suite intentionally grows.
+  MIN_EXPECTED_TESTS: "55"
+
+  # External fixture cache version.
+  #
+  # Change this from v1 -> v2 whenever you replace/update the Drive files.
+  FIXTURE_CACHE_VERSION: "v1"
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Google Drive fixture IDs
+  # ────────────────────────────────────────────────────────────────────────
+
+  DRIVE_MULTI_FILE_1_1:
+    "1WQ8X5E0resIr1MQT9OxtgHI4CwILu-xO"
+
+  DRIVE_LARGE_1GB:
+    "1WaxD-XaPU8lTbEUflrnKdfyr6jCny123"
+
+  DRIVE_LARGE_1_3GB:
+    "1uxqHpJ1UvRoehvc7Qr3iGzz71KAl84UT"
+
+  DRIVE_LARGE_1_69GB:
+    "188Zhju97GKpY-shobecd_We7DYbOw"
+
+  DRIVE_VALID_GEOTIF:
+    "1uQjobUyiGCqPtJaJKNcTN-gcjW1dn0cY"
+
+  DRIVE_VALID_GEOTIFF:
+    "1WsnRDjSQmK7DlRLK5VJmWgbZtA-_Q5BP"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# JOB 1 — DELETE PREVIOUS COMPLETED ACTION RUNS
+# ══════════════════════════════════════════════════════════════════════════
+
 jobs:
-  preflight:
-    name: Provision and validate test inputs
+
+  cleanup-previous:
+    name: "🧹 Delete old completed workflow runs"
+
     runs-on: ubuntu-24.04
-    env:
-      RUN_LARGE_FILE_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_large_file_tests == true && '1' || '0' }}
-      GEOVIEWER_EXTRA_FIXTURE_IDS: ${{ vars.GEOVIEWER_EXTRA_FIXTURE_IDS || secrets.GEOVIEWER_EXTRA_FIXTURE_IDS || '{}' }}
+
+    # Cleanup failure must not stop the actual test suite.
+    continue-on-error: true
 
     steps:
-      - name: Checkout repository
+
+      - name: "🗑️ Delete previous completed runs of THIS workflow"
+        uses: actions/github-script@v9
+
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+
+        with:
+          script: |
+            const workflowRef =
+              process.env.WORKFLOW_REF || "";
+
+            const match =
+              workflowRef.match(
+                /\.github\/workflows\/([^@]+)@/
+              );
+
+            if (!match) {
+              core.info(
+                `Unable to determine workflow file from github.workflow_ref: ${workflowRef}`
+              );
+
+              await core.summary
+                .addHeading("🧹 Previous Run Cleanup")
+                .addRaw(
+                  "Workflow file could not be determined. No previous runs were deleted."
+                )
+                .write();
+
+              return;
+            }
+
+            const workflowFile = match[1];
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const currentRunId = context.runId;
+
+            const runs =
+              await github.paginate(
+                github.rest.actions.listWorkflowRuns,
+                {
+                  owner,
+                  repo,
+                  workflow_id: workflowFile,
+                  status: "completed",
+                  per_page: 100
+                }
+              );
+
+            const previousRuns =
+              runs
+                .filter(
+                  run =>
+                    run.id !== currentRunId
+                )
+                .sort(
+                  (a, b) =>
+                    b.id - a.id
+                );
+
+            let deleted = 0;
+            let failed = 0;
+
+            for (
+              const run of previousRuns
+            ) {
+              try {
+                await github.rest.actions.deleteWorkflowRun(
+                  {
+                    owner,
+                    repo,
+                    run_id: run.id
+                  }
+                );
+
+                deleted++;
+
+                core.info(
+                  `Deleted run #${run.run_number} (${run.id})`
+                );
+
+              } catch (error) {
+                failed++;
+
+                core.info(
+                  `Could not delete run #${run.run_number}: ${error.message}`
+                );
+              }
+            }
+
+            await core.summary
+              .addHeading(
+                "🧹 Previous Run Cleanup"
+              )
+              .addTable([
+                [
+                  {
+                    data: "Metric",
+                    header: true
+                  },
+                  {
+                    data: "Count",
+                    header: true
+                  }
+                ],
+                [
+                  "Previous completed runs found",
+                  String(previousRuns.length)
+                ],
+                [
+                  "Runs deleted",
+                  String(deleted)
+                ],
+                [
+                  "Deletion failures",
+                  String(failed)
+                ]
+              ])
+              .addRaw(
+                "\nOnly COMPLETED runs of this workflow were targeted. Current and in-progress runs were preserved."
+              )
+              .write();
+
+
+  # ════════════════════════════════════════════════════════════════════════
+  # JOB 2 — PREPARE THE COMPLETE TEST ENVIRONMENT
+  #
+  # This is the only place where external Drive fixtures are downloaded.
+  #
+  # Git files:
+  #   actions/checkout downloads them normally.
+  #
+  # External files:
+  #   downloaded into the SAME test-data paths expected by TestData.js.
+  #
+  # Result:
+  #
+  # test-data/
+  #   ├── valid/
+  #   ├── invalid/
+  #   ├── corrupt/
+  #   ├── boundary/
+  #   ├── negative/
+  #   └── gis/
+  #
+  # The external part is cached for all 8 shards.
+  # ════════════════════════════════════════════════════════════════════════
+
+  prepare:
+    name: "📦 Prepare complete test-data"
+
+    needs:
+      - cleanup-previous
+
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      - name: "📥 Checkout repository"
         uses: actions/checkout@v7
 
-      - name: Setup Node.js 22
+      - name: "⬢ Setup Node.js ${{ env.NODE_VERSION }}"
         uses: actions/setup-node@v7
+
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
+
           cache: npm
 
-      - name: Install dependencies
+      - name: "📦 Install dependencies"
         run: npm ci
 
-      - name: Setup Python for Google Drive downloads
+      - name: "🐍 Setup Python"
         uses: actions/setup-python@v6
+
         with:
           python-version: "3.12"
 
-      - name: Install Google Drive downloader
-        run: python -m pip install --disable-pip-version-check gdown==6.4.1
+      - name: "⬇️ Install Google Drive downloader"
+        run: |
+          python -m pip install \
+            --disable-pip-version-check \
+            gdown==6.4.1
 
-      - name: Validate extension and provision fixtures
+
+      # ────────────────────────────────────────────────────────────────────
+      # Restore external fixture cache.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "♻️ Restore external fixture cache"
+        id: restore-fixtures
+        uses: actions/cache/restore@v6
+
+        with:
+          path: ci-dependencies/external-test-data
+
+          key: mrsid-external-fixtures-${{ env.FIXTURE_CACHE_VERSION }}-${{ runner.os }}
+
+
+      # ────────────────────────────────────────────────────────────────────
+      # Prepare directories.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "📁 Prepare fixture directories"
         shell: bash
+
         run: |
           set -euo pipefail
+
+          mkdir -p \
+            test-data/valid \
+            ci-dependencies/external-test-data/valid
+
+
+      # ────────────────────────────────────────────────────────────────────
+      # Verify extension.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "✅ Validate extension"
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
           test -f extension/manifest.json || {
             echo "::error::Missing extension/manifest.json"
             exit 1
           }
 
-          fixture_root="$GITHUB_WORKSPACE/ci-dependencies/test-data"
-          mkdir -p "$fixture_root"
-          cp -a test-data/. "$fixture_root/"
+          echo "✅ Extension manifest found."
+
+
+      # ────────────────────────────────────────────────────────────────────
+      # External fixture download helper.
+      #
+      # If the cache already contains a file, DO NOT download it again.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "⬇️ Download missing external fixtures"
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
+          EXTERNAL_ROOT="$GITHUB_WORKSPACE/ci-dependencies/external-test-data"
+
 
           download_fixture() {
             local file_id="$1"
             local relative_path="$2"
-            local destination="$fixture_root/$relative_path"
+
+            local destination="$EXTERNAL_ROOT/$relative_path"
+
+
             mkdir -p "$(dirname "$destination")"
-            echo "Downloading test fixture: $relative_path"
-            if ! python -m gdown "https://drive.google.com/file/d/${file_id}/view" -O "$destination"; then
-              echo "::error title=Google Drive download failed::Could not download $relative_path (Drive file ID: $file_id). Verify the file is shared with Viewer access."
-              return 1
+
+
+            if [[ -s "$destination" ]]; then
+              echo "✅ Already available: $relative_path"
+              return 0
             fi
+
+
+            echo ""
+            echo "════════════════════════════════════════════════════════════"
+            echo "⬇️ Downloading:"
+            echo "$relative_path"
+            echo "════════════════════════════════════════════════════════════"
+
+
+            python -m gdown \
+              "https://drive.google.com/file/d/${file_id}/view" \
+              -O "$destination"
+
+
             test -s "$destination" || {
-              echo "::error title=Empty test fixture::Google Drive returned an empty file for $relative_path (Drive file ID: $file_id)."
+              echo "::error title=Fixture download failed::Downloaded file is empty: $relative_path"
               return 1
             }
+
+
+            echo "✅ Downloaded: $relative_path"
           }
 
-          download_fixture 1WsnRDjSQmK7DlRLK5VJmWgbZtA-_Q5BP valid/Valid_GeoTIFF.tiff
-          download_fixture 1uQjobUyiGCqPtJaJKNcTN-gcjW1dn0cY valid/Valid_GeoTIF.tif
-          download_fixture 1ysP5s_ZT5g-HIJYVPYVjcsbnAmCH9_y4 valid/01_multi_file_set_2_0.tif
-          download_fixture 1Km1grl9wsfUJKL4wFzKSZLCAntk5BIYs valid/01_multi_file_set_0_0.tif
 
-          if [[ "$RUN_LARGE_FILE_TESTS" == "1" ]]; then
-            download_fixture 1WaxD-XaPU8lTbEUflrnKdfyr6jCny123 valid/large_1GB_MrSID.sid
-            download_fixture 1uxqHpJ1UvRoehvc7Qr3iGzz71KAl84UT valid/large_1.3GB_MrSID_alaska_eox_007of016.sid
-            download_fixture 188Zhju97yGKYLpA-shobecd_We7DYbOw valid/S1A_Ireland_Complex_Mosaic_May2015_20m_EPSG2157_1.69GB.tif
-          else
-            echo "Large-file fixtures omitted; enable run_large_file_tests to download them."
-          fi
+          # Multi-file test data
+          download_fixture \
+            "${DRIVE_MULTI_FILE_1_1}" \
+            "valid/01_multi_file_set_1_1.sid"
 
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          import path from 'node:path';
-          import { spawnSync } from 'node:child_process';
 
-          let fixtures;
-          try {
-            fixtures = JSON.parse(process.env.GEOVIEWER_EXTRA_FIXTURE_IDS || '{}');
-          } catch (error) {
-            throw new Error(`GEOVIEWER_EXTRA_FIXTURE_IDS must be valid JSON: ${error.message}`);
-          }
+          # Normal valid raster inputs
+          download_fixture \
+            "${DRIVE_VALID_GEOTIF}" \
+            "valid/Valid_GeoTIF.tif"
 
-          const root = path.resolve('ci-dependencies/test-data');
-          for (const [relativePath, fileId] of Object.entries(fixtures)) {
-            if (typeof fileId !== 'string' || !/^[\w-]+$/.test(fileId)) {
-              throw new Error(`Invalid Drive file ID for ${relativePath}`);
-            }
-            const destination = path.resolve(root, relativePath);
-            if (!destination.startsWith(`${root}${path.sep}`)) {
-              throw new Error(`Fixture path must stay under test-data/: ${relativePath}`);
-            }
-            fs.mkdirSync(path.dirname(destination), { recursive: true });
-            const result = spawnSync(
-              'python',
-              ['-m', 'gdown', `https://drive.google.com/file/d/${fileId}/view`, '-O', destination],
-              { stdio: 'inherit' },
-            );
-            if (result.status !== 0 || !fs.existsSync(destination) || fs.statSync(destination).size === 0) {
-              throw new Error(`Could not provision fixture: ${relativePath}`);
-            }
-          }
-          NODE
 
-          npx playwright test --list --project=chromium-extension | tee "$RUNNER_TEMP/test-list.txt"
-          discovered=$(sed -n 's/^Total: \([0-9][0-9]*\) tests.*/\1/p' "$RUNNER_TEMP/test-list.txt" | tail -n 1)
-          if [[ ! "$discovered" =~ ^[0-9]+$ || "$discovered" -lt 55 ]]; then
-            echo "::error::Expected at least 55 chromium-extension tests; found '${discovered:-unknown}'."
+          download_fixture \
+            "${DRIVE_VALID_GEOTIFF}" \
+            "valid/Valid_GeoTIFF.tiff"
+
+
+          # Large test inputs
+          download_fixture \
+            "${DRIVE_LARGE_1GB}" \
+            "valid/large_1GB_MrSID.sid"
+
+
+          download_fixture \
+            "${DRIVE_LARGE_1_3GB}" \
+            "valid/large_1.3GB_MrSID_alaska_eox_007of016.sid"
+
+
+          download_fixture \
+            "${DRIVE_LARGE_1_69GB}" \
+            "valid/S1A_Ireland_Complex_Mosaic_May2015_20m_EPSG2157_1.69GB.tif"
+
+
+      # ────────────────────────────────────────────────────────────────────
+      # Show BOTH repository data and external data.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "🔎 Validate complete test-data layout"
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
+          echo "📂 Git checkout: test-data/"
+          echo "════════════════════════════════════════════════════════════"
+
+          find test-data \
+            -type f \
+            -printf '%P\t%s bytes\n' \
+            | sort
+
+
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
+          echo "📂 External fixtures:"
+          echo "════════════════════════════════════════════════════════════"
+
+          find ci-dependencies/external-test-data \
+            -type f \
+            -printf '%P\t%s bytes\n' \
+            | sort
+
+
+      # ────────────────────────────────────────────────────────────────────
+      # Save cache only when it wasn't already present.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "💾 Save external fixture cache"
+        if: steps.restore-fixtures.outputs.cache-hit != 'true'
+
+        uses: actions/cache/save@v6
+
+        with:
+          path: ci-dependencies/external-test-data
+
+          key: mrsid-external-fixtures-${{ env.FIXTURE_CACHE_VERSION }}-${{ runner.os }}
+
+
+      # ────────────────────────────────────────────────────────────────────
+      # Test discovery.
+      #
+      # IMPORTANT:
+      # No large-file exclusion.
+      #
+      # We explicitly verify that @large-file tests are discovered.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "🧪 Validate COMPLETE Playwright test discovery"
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
+
+          npx playwright test \
+            --list \
+            --project="${PLAYWRIGHT_PROJECT}" \
+            | tee "$RUNNER_TEMP/test-list.txt"
+
+
+          discovered=$(
+            sed \
+              -n \
+              's/^Total: \([0-9][0-9]*\) tests.*/\1/p' \
+              "$RUNNER_TEMP/test-list.txt" \
+            | tail -n 1
+          )
+
+
+          if [[ ! "$discovered" =~ ^[0-9]+$ ]]; then
+            echo "::error::Could not determine Playwright test count."
             exit 1
           fi
-          echo "Tests discovered: $discovered" >> "$GITHUB_STEP_SUMMARY"
 
-          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
 
-          MrSID fixtures without supplied Drive IDs (optional tests skip if absent):
-          - `valid/01_NAIP_2014_WGS84.sid`
-          - `valid/NAIP_2014_WGS84_EPSG4326.sid`
-          - `valid/01_multi_file_set_1_1.sid`
-          - `invalid/non_georeferenced.sid`
-          - `corrupt/corrupt.sid`
-          - `boundary/tiny.sid`
-          - `boundary/VALID_UPPER_MrSID_Extension.SID`
+          if (( discovered < MIN_EXPECTED_TESTS )); then
+            echo "::error::Expected at least ${MIN_EXPECTED_TESTS} tests, found ${discovered}."
+            exit 1
+          fi
 
-          Add available IDs to the repository variable or secret `GEOVIEWER_EXTRA_FIXTURE_IDS` as JSON keyed by paths relative to `test-data/`.
-          SUMMARY
 
-      - name: Upload provisioned fixtures
-        uses: actions/upload-artifact@v7
-        with:
-          name: geoviewer-ci-inputs
-          path: ci-dependencies/test-data/
-          if-no-files-found: error
-          retention-days: 1
+          # Make sure large-file tests are actually part of the suite.
+          if ! grep -q "@large-file" "$RUNNER_TEMP/test-list.txt"; then
+            echo "::warning::No @large-file tests were detected in discovery output."
+          fi
+
+
+          {
+            echo "## ✅ Complete Playwright suite discovered"
+            echo
+            echo "| Metric | Value |"
+            echo "|---|---:|"
+            echo "| Total discovered tests | **${discovered}** |"
+            echo "| Playwright project | \`${PLAYWRIGHT_PROJECT}\` |"
+            echo "| Shards | **${TOTAL_SHARDS}** |"
+            echo "| Workers / shard | **${DEFAULT_WORKERS}** |"
+            echo "| Large-file tests | Included in same suite |"
+            echo
+            echo "### Complete test-data inventory"
+            echo
+            echo '```text'
+            find test-data \
+              -type f \
+              -printf '%P\t%s bytes\n' \
+              | sort
+            echo '```'
+            echo
+            echo "### External test-data inventory"
+            echo
+            echo '```text'
+            find ci-dependencies/external-test-data \
+              -type f \
+              -printf '%P\t%s bytes\n' \
+              | sort
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
+  # ════════════════════════════════════════════════════════════════════════
+  # JOB 3 — 8 PARALLEL SHARDS
+  #
+  # EVERY TEST participates.
+  #
+  # No:
+  #   --grep-invert "@large-file"
+  #
+  # No:
+  #   separate large-file job
+  #
+  # All tests are part of the same Playwright test pool.
+  # ════════════════════════════════════════════════════════════════════════
 
   test:
-    needs: preflight
-    name: Shard ${{ matrix.shard }}/4 - chromium-extension
+    name: "🧪 Shard ${{ matrix.shard }}/8 · Chromium Extension"
+
+    needs:
+      - prepare
+
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+
+    timeout-minutes: 120
+
     strategy:
       fail-fast: false
-      max-parallel: 4
+
+      # Start all 8 shards in parallel where the repository/account
+      # concurrency limit allows it.
+      max-parallel: 8
+
       matrix:
-        shard: [1, 2, 3, 4]
+        shard:
+          - 1
+          - 2
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
+
 
     steps:
-      - name: Checkout repository
+
+      - name: "📥 Checkout repository"
         uses: actions/checkout@v7
 
-      - name: Download provisioned fixtures
-        uses: actions/download-artifact@v8
-        with:
-          name: geoviewer-ci-inputs
-          path: ${{ runner.temp }}/geoviewer-ci/test-data
 
-      - name: Install provisioned fixtures
-        run: cp -a "$RUNNER_TEMP/geoviewer-ci/test-data/." test-data/
-
-      - name: Setup Node.js 22
+      - name: "⬢ Setup Node.js ${{ env.NODE_VERSION }}"
         uses: actions/setup-node@v7
+
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
+
           cache: npm
 
-      - name: Install dependencies
+
+      - name: "📦 Install dependencies"
         run: npm ci
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
 
-      - name: Run Playwright shard ${{ matrix.shard }}/4
+      - name: "♻️ Restore complete external fixture cache"
+        id: restore-fixtures
+
+        uses: actions/cache/restore@v6
+
+        with:
+          path: ci-dependencies/external-test-data
+
+          key: mrsid-external-fixtures-${{ env.FIXTURE_CACHE_VERSION }}-${{ runner.os }}
+
+
+      # ────────────────────────────────────────────────────────────────────
+      # If cache is unavailable, download only the external files needed
+      # by this shard.
+      #
+      # This is a fallback for cases such as restricted cache permissions.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "🐍 Setup Python for cache-miss fallback"
+        if: steps.restore-fixtures.outputs.cache-hit != 'true'
+
+        uses: actions/setup-python@v6
+
+        with:
+          python-version: "3.12"
+
+
+      - name: "⬇️ Install Google Drive downloader"
+        if: steps.restore-fixtures.outputs.cache-hit != 'true'
+
+        run: |
+          python -m pip install \
+            --disable-pip-version-check \
+            gdown==6.4.1
+
+
+      - name: "⬇️ Fallback download external fixtures"
+        if: steps.restore-fixtures.outputs.cache-hit != 'true'
+
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
+          EXTERNAL_ROOT="$GITHUB_WORKSPACE/ci-dependencies/external-test-data"
+
+
+          mkdir -p "$EXTERNAL_ROOT/valid"
+
+
+          download_fixture() {
+            local file_id="$1"
+            local relative_path="$2"
+
+            local destination="$EXTERNAL_ROOT/$relative_path"
+
+
+            mkdir -p "$(dirname "$destination")"
+
+
+            if [[ -s "$destination" ]]; then
+              echo "✅ Already available: $relative_path"
+              return 0
+            fi
+
+
+            echo "⬇️ Downloading fallback fixture: $relative_path"
+
+
+            python -m gdown \
+              "https://drive.google.com/file/d/${file_id}/view" \
+              -O "$destination"
+
+
+            test -s "$destination" || {
+              echo "::error::Empty downloaded fixture: $relative_path"
+              exit 1
+            }
+          }
+
+
+          download_fixture \
+            "${DRIVE_MULTI_FILE_1_1}" \
+            "valid/01_multi_file_set_1_1.sid"
+
+
+          download_fixture \
+            "${DRIVE_VALID_GEOTIF}" \
+            "valid/Valid_GeoTIF.tif"
+
+
+          download_fixture \
+            "${DRIVE_VALID_GEOTIFF}" \
+            "valid/Valid_GeoTIFF.tiff"
+
+
+          download_fixture \
+            "${DRIVE_LARGE_1GB}" \
+            "valid/large_1GB_MrSID.sid"
+
+
+          download_fixture \
+            "${DRIVE_LARGE_1_3GB}" \
+            "valid/large_1.3GB_MrSID_alaska_eox_007of016.sid"
+
+
+          download_fixture \
+            "${DRIVE_LARGE_1_69GB}" \
+            "valid/S1A_Ireland_Complex_Mosaic_May2015_20m_EPSG2157_1.69GB.tif"
+
+
+      # ────────────────────────────────────────────────────────────────────
+      # Merge external files into the NORMAL test-data directory.
+      #
+      # This preserves your existing TestData.js paths exactly.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "📂 Build complete test-data directory"
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
+          mkdir -p test-data
+
+          cp -a \
+            ci-dependencies/external-test-data/. \
+            test-data/
+
+
+      - name: "🔎 Validate shard test-data"
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
+
+          required_files=(
+            "test-data/valid/01_multi_file_set_1_1.sid"
+            "test-data/valid/Valid_GeoTIF.tif"
+            "test-data/valid/Valid_GeoTIFF.tiff"
+            "test-data/valid/large_1GB_MrSID.sid"
+            "test-data/valid/large_1.3GB_MrSID_alaska_eox_007of016.sid"
+            "test-data/valid/S1A_Ireland_Complex_Mosaic_May2015_20m_EPSG2157_1.69GB.tif"
+          )
+
+
+          for file in "${required_files[@]}"; do
+
+            if [[ ! -s "$file" ]]; then
+              echo "::error::Missing required fixture: $file"
+              exit 1
+            fi
+
+            echo "✅ $file"
+
+          done
+
+
+      - name: "🎭 Install Playwright Chromium"
+        run: |
+          npx playwright install --with-deps chromium
+
+
+      # ════════════════════════════════════════════════════════════════════
+      # RUN COMPLETE SHARD
+      #
+      # No grep-invert.
+      #
+      # Therefore large-file tests are part of the same suite.
+      # ════════════════════════════════════════════════════════════════════
+
+      - name: "🚀 Run Playwright — shard ${{ matrix.shard }}/8"
         env:
           CI: "true"
-          HEADLESS: ${{ github.event_name == 'workflow_dispatch' && inputs.headless == true && 'true' || 'false' }}
+
+          HEADLESS: ${{ github.event_name == 'workflow_dispatch' && inputs.headless && 'true' || 'false' }}
+
           BACKEND_URL: ${{ secrets.BACKEND_URL || secrets.GEOVIEWER_BACKEND_URL || 'https://api.geowgs84.com' }}
+
           GEOVIEWER_BACKEND_URL: ${{ secrets.GEOVIEWER_BACKEND_URL || secrets.BACKEND_URL || 'https://api.geowgs84.com' }}
+
           TEST_GREP: ${{ inputs.test_grep || '' }}
+
           ENABLE_EMAIL_REPORTER: "false"
+
           VISUAL_STEP_DELAY_MS: "0"
+
           GEOVIEWER_VISUAL_DEMO: "0"
-          DEBUG: ${{ inputs.debug_mode == true && 'pw:api,pw:browser' || '' }}
+
+          PW_WORKERS: "1"
+
+          DEBUG: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_mode && 'pw:api,pw:browser' || '' }}
+
         shell: bash
+
         run: |
-          grep_args=()
-          if [[ -n "$TEST_GREP" ]]; then
-            grep_args+=(--grep "$TEST_GREP")
-          fi
           set -o pipefail
-          xvfb-run -a npx playwright test \
-            --project=chromium-extension \
-            --workers="${{ inputs.workers || '1' }}" \
-            --shard=${{ matrix.shard }}/4 \
-            "${grep_args[@]}" 2>&1 | tee "shard-${{ matrix.shard }}.log"
 
-      - name: Upload shard log and test results
+          grep_args=()
+
+
+          if [[ -n "$TEST_GREP" ]]; then
+            grep_args+=(
+              --grep "$TEST_GREP"
+            )
+          fi
+
+
+          set +e
+
+          xvfb-run -a \
+            npx playwright test \
+              --project="${PLAYWRIGHT_PROJECT}" \
+              --workers=1 \
+              --shard="${{ matrix.shard }}/8" \
+              "${grep_args[@]}" \
+              2>&1 \
+              | tee "shard-${{ matrix.shard }}.log"
+
+
+          TEST_EXIT=${PIPESTATUS[0]}
+
+
+          set -e
+
+
+          echo "$TEST_EXIT" \
+            > "shard-${{ matrix.shard }}-exit-code.txt"
+
+
+          exit "$TEST_EXIT"
+
+
+      # ════════════════════════════════════════════════════════════════════
+      # SHARD METRICS
+      # ════════════════════════════════════════════════════════════════════
+
+      - name: "📊 Generate shard metrics"
         if: always()
+
+        env:
+          SHARD: ${{ matrix.shard }}
+
+        shell: bash
+
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+
+          const shard =
+            Number(process.env.SHARD);
+
+          const logFile =
+            `shard-${shard}.log`;
+
+          const exitFile =
+            `shard-${shard}-exit-code.txt`;
+
+
+          const log =
+            fs.existsSync(logFile)
+              ? fs.readFileSync(
+                  logFile,
+                  "utf8"
+                )
+              : "";
+
+
+          const exitText =
+            fs.existsSync(exitFile)
+              ? fs.readFileSync(
+                  exitFile,
+                  "utf8"
+                ).trim()
+              : "";
+
+
+          const exitCode =
+            exitText !== "" &&
+            !Number.isNaN(
+              Number(exitText)
+            )
+              ? Number(exitText)
+              : 1;
+
+
+          /*
+           * ONLY exact diagnostic result records are counted.
+           */
+          const diagRecordPattern =
+            /^\s*\[DIAG-DEBUG\]\s+testId="([^"]+)"\s+title="(.*?)"\s+warnings=(\d+)\s+errors=(\d+)\s+skipped=(\d+)\s+status=([A-Za-z0-9_-]+)\s*$/;
+
+
+          const recordsByTestId =
+            new Map();
+
+
+          for (
+            const line of log.split(/\r?\n/)
+          ) {
+            const match =
+              line.match(
+                diagRecordPattern
+              );
+
+
+            if (!match) {
+              continue;
+            }
+
+
+            const [
+              ,
+              testId,
+              title,
+              warnings,
+              errors,
+              skipped,
+              status,
+            ] = match;
+
+
+            recordsByTestId.set(
+              testId,
+              {
+                line,
+                testId,
+                title,
+                warnings:
+                  Number(warnings),
+                errors:
+                  Number(errors),
+                skipped:
+                  Number(skipped),
+                status:
+                  status.toLowerCase(),
+              }
+            );
+          }
+
+
+          const records =
+            [...recordsByTestId.values()];
+
+
+          const total =
+            field =>
+              records.reduce(
+                (sum, record) =>
+                  sum + record[field],
+                0
+              );
+
+
+          const passed =
+            records.filter(
+              record =>
+                record.status ===
+                "passed"
+            ).length;
+
+
+          const failed =
+            records.filter(
+              record =>
+                [
+                  "failed",
+                  "error",
+                ].includes(
+                  record.status
+                )
+            ).length;
+
+
+          const flaky =
+            records.filter(
+              record =>
+                [
+                  "flaky",
+                  "flaky-failed",
+                ].includes(
+                  record.status
+                )
+            ).length;
+
+
+          const skippedByField =
+            total("skipped");
+
+
+          const skippedByStatus =
+            records.filter(
+              record =>
+                [
+                  "skipped",
+                  "skip",
+                ].includes(
+                  record.status
+                )
+            ).length;
+
+
+          const skipped =
+            skippedByField > 0
+              ? skippedByField
+              : skippedByStatus;
+
+
+          const notRunStatuses =
+            new Set([
+              "didnotrun",
+              "did-not-run",
+              "notrun",
+              "not-run",
+              "not_run",
+            ]);
+
+
+          const didNotRun =
+            records.filter(
+              record =>
+                notRunStatuses.has(
+                  record.status
+                )
+            ).length;
+
+
+          const warnings =
+            total("warnings");
+
+
+          const errors =
+            total("errors");
+
+
+          const signals =
+            records
+              .filter(
+                record =>
+                  record.warnings > 0 ||
+                  record.errors > 0
+              )
+              .slice(
+                0,
+                20
+              );
+
+
+          let status;
+
+
+          if (exitCode !== 0) {
+
+            status =
+              "failed";
+
+          } else if (
+            errors > 0 ||
+            failed > 0
+          ) {
+
+            status =
+              "passed_with_diag_failures";
+
+          } else if (
+            warnings > 0
+          ) {
+
+            status =
+              "passed_with_diag_warnings";
+
+          } else {
+
+            status =
+              "passed";
+          }
+
+
+          const metrics = {
+            shard,
+            totalShards: 8,
+            workers: 1,
+            exitCode,
+            status,
+            passed,
+            failed,
+            skipped,
+            flaky,
+            didNotRun,
+            warnings,
+            errors,
+            diagTestRecords:
+              records.length,
+            signals:
+              signals.map(
+                record =>
+                  record.line
+              ),
+          };
+
+
+          fs.writeFileSync(
+            "shard-metrics.json",
+            JSON.stringify(
+              metrics,
+              null,
+              2
+            )
+          );
+          NODE
+
+
+      # ════════════════════════════════════════════════════════════════════
+      # SHARD SUMMARY
+      # ════════════════════════════════════════════════════════════════════
+
+      - name: "📝 Publish shard summary"
+        if: always()
+
+        shell: bash
+
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+
+
+          const metricsFile =
+            "shard-metrics.json";
+
+
+          if (
+            !fs.existsSync(
+              metricsFile
+            )
+          ) {
+            fs.appendFileSync(
+              process.env.GITHUB_STEP_SUMMARY,
+              [
+                "# ⏺️ Shard metrics unavailable",
+                "",
+                "The shard did not produce shard-metrics.json.",
+                "",
+              ].join("\n")
+            );
+
+            process.exit(0);
+          }
+
+
+          const m =
+            JSON.parse(
+              fs.readFileSync(
+                metricsFile,
+                "utf8"
+              )
+            );
+
+
+          const icon =
+            m.status === "failed"
+              ? "❌"
+              : m.status ===
+                  "passed_with_diag_failures"
+                ? "⚠️"
+                : m.status ===
+                    "passed_with_diag_warnings"
+                  ? "🟡"
+                  : "✅";
+
+
+          let out =
+            `# ${icon} Shard ${String(m.shard).padStart(2, "0")} / 08\n\n`;
+
+
+          out +=
+            "| Metric | Count |\n" +
+            "|---|---:|\n";
+
+
+          out +=
+            `| ✅ Passed | **${m.passed}** |\n`;
+
+          out +=
+            `| ❌ Failed | **${m.failed}** |\n`;
+
+          out +=
+            `| ⏭️ Skipped | **${m.skipped}** |\n`;
+
+          out +=
+            `| 🔁 Flaky | **${m.flaky}** |\n`;
+
+          out +=
+            `| ⏹️ Did not run | **${m.didNotRun}** |\n`;
+
+          out +=
+            `| ⚠️ DIAG warnings | **${m.warnings}** |\n`;
+
+          out +=
+            `| 🚨 DIAG errors | **${m.errors}** |\n\n`;
+
+
+          out +=
+            `**Workers:** \`1\` ` +
+            `· **Exit code:** \`${m.exitCode}\` ` +
+            `· **DIAG records:** \`${m.diagTestRecords}\`\n\n`;
+
+
+          if (
+            m.signals?.length
+          ) {
+
+            out +=
+              "<details><summary>" +
+              "🔎 DIAG-DEBUG signals" +
+              "</summary>\n\n";
+
+
+            out +=
+              "```text\n" +
+              m.signals.join("\n") +
+              "\n```\n\n";
+
+
+            out +=
+              "</details>\n";
+
+          } else {
+
+            out +=
+              "✅ No DIAG warning/error signals detected.\n";
+          }
+
+
+          fs.appendFileSync(
+            process.env.GITHUB_STEP_SUMMARY,
+            out
+          );
+          NODE
+
+
+      # ════════════════════════════════════════════════════════════════════
+      # PER-SHARD ARTIFACTS
+      # ════════════════════════════════════════════════════════════════════
+
+      - name: "📊 Upload shard metrics + log"
+        if: always()
+
         uses: actions/upload-artifact@v7
+
         with:
-          name: test-results-${{ matrix.shard }}
+          name: shard-metrics-${{ matrix.shard }}
+
           path: |
+            shard-metrics.json
             shard-${{ matrix.shard }}.log
-            test-results/
+            shard-${{ matrix.shard }}-exit-code.txt
+
           if-no-files-found: ignore
+
           retention-days: 7
 
-      - name: Upload diagnostics
+
+      - name: "📊 Upload shard HTML report"
         if: always()
+
         uses: actions/upload-artifact@v7
+
         with:
-          name: diagnostics-${{ matrix.shard }}
-          path: diagnostics/
+          name: playwright-report-shard-${{ matrix.shard }}
+
+          path: playwright-report/
+
           if-no-files-found: ignore
+
           retention-days: 7
 
-      - name: Upload Playwright blob report
+
+      - name: "🧾 Upload shard blob report"
         if: always()
+
         uses: actions/upload-artifact@v7
+
         with:
-          name: blob-report-${{ matrix.shard }}
+          name: blob-report-shard-${{ matrix.shard }}
+
           path: blob-report/
+
           if-no-files-found: ignore
+
           retention-days: 7
+
+
+      - name: "🧩 Upload shard test results"
+        if: always()
+
+        uses: actions/upload-artifact@v7
+
+        with:
+          name: test-results-shard-${{ matrix.shard }}
+
+          path: test-results/
+
+          if-no-files-found: ignore
+
+          retention-days: 7
+
+
+      - name: "🔬 Upload shard diagnostics"
+        if: always()
+
+        uses: actions/upload-artifact@v7
+
+        with:
+          name: diagnostics-shard-${{ matrix.shard }}
+
+          path: diagnostics/
+
+          if-no-files-found: ignore
+
+          retention-days: 7
+
+
+  # ════════════════════════════════════════════════════════════════════════
+  # JOB 4 — CONSOLIDATED MATRIX + REPORT
+  # ════════════════════════════════════════════════════════════════════════
 
   dashboard:
-    if: always()
-    needs: test
-    name: Consolidated Playwright report
+    name: "📈 Consolidated shard matrix + report"
+
+    if: ${{ !cancelled() }}
+
+    needs:
+      - test
+
     runs-on: ubuntu-24.04
+
+
     steps:
-      - name: Checkout repository
+
+      - name: "📥 Checkout repository"
         uses: actions/checkout@v7
 
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
 
-      - name: Install dependencies
+      - name: "⬢ Setup Node.js ${{ env.NODE_VERSION }}"
+        uses: actions/setup-node@v7
+
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+
+      - name: "📦 Install dependencies"
         run: npm ci
 
-      - name: Download shard reports
-        uses: actions/download-artifact@v8
-        with:
-          pattern: blob-report-*
-          merge-multiple: true
-          path: blob-reports
 
-      - name: Merge HTML report
+      # ────────────────────────────────────────────────────────────────────
+      # IMPORTANT:
+      # Keep shard artifacts separated because every shard contains the same
+      # filenames such as shard-metrics.json.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "⬇️ Download shard metrics"
+        uses: actions/download-artifact@v8
+
+        with:
+          pattern: shard-metrics-*
+
+          merge-multiple: false
+
+          path: shard-metrics
+
+
+      - name: "⬇️ Download all shard blob reports"
+        uses: actions/download-artifact@v8
+
+        with:
+          pattern: blob-report-shard-*
+
+          merge-multiple: true
+
+          path: all-blob-reports
+
+
+      - name: "⬇️ Download all shard HTML reports"
+        uses: actions/download-artifact@v8
+
+        with:
+          pattern: playwright-report-shard-*
+
+          merge-multiple: false
+
+          path: all-shard-html-reports
+
+
+      - name: "⬇️ Download all shard test results"
+        uses: actions/download-artifact@v8
+
+        with:
+          pattern: test-results-shard-*
+
+          merge-multiple: false
+
+          path: all-test-results
+
+
+      - name: "⬇️ Download all shard diagnostics"
+        uses: actions/download-artifact@v8
+
+        with:
+          pattern: diagnostics-shard-*
+
+          merge-multiple: false
+
+          path: all-diagnostics
+
+
+      # ────────────────────────────────────────────────────────────────────
+      # Build matrix
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "📈 Build complete shard matrix"
+        shell: bash
+
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+
         run: |
-          if find blob-reports -type f -name '*.zip' -print -quit | grep -q .; then
-            npx playwright merge-reports --reporter=html blob-reports
+          node <<'NODE'
+          const fs = require("fs");
+
+
+          const TOTAL_SHARDS = 8;
+
+
+          const root =
+            "shard-metrics";
+
+
+          const metricsByShard =
+            new Map();
+
+
+          function walk(dir) {
+
+            if (!fs.existsSync(dir)) {
+              return [];
+            }
+
+
+            const files = [];
+
+
+            for (
+              const entry of fs.readdirSync(
+                dir,
+                {
+                  withFileTypes: true
+                }
+              )
+            ) {
+
+              const full =
+                `${dir}/${entry.name}`;
+
+
+              if (
+                entry.isDirectory()
+              ) {
+
+                files.push(
+                  ...walk(full)
+                );
+
+              } else {
+
+                files.push(full);
+              }
+            }
+
+
+            return files;
+          }
+
+
+          for (
+            const file of walk(root)
+          ) {
+
+            if (
+              !file.endsWith(
+                ".json"
+              )
+            ) {
+              continue;
+            }
+
+
+            try {
+
+              const metric =
+                JSON.parse(
+                  fs.readFileSync(
+                    file,
+                    "utf8"
+                  )
+                );
+
+
+              if (
+                Number.isInteger(
+                  metric.shard
+                )
+              ) {
+                metricsByShard.set(
+                  metric.shard,
+                  metric
+                );
+              }
+
+            } catch {
+              // Malformed metric = shard remains NOT REPORTED.
+            }
+          }
+
+
+          const rows =
+            Array.from(
+              {
+                length:
+                  TOTAL_SHARDS
+              },
+              (_, index) => {
+
+                const shard =
+                  index + 1;
+
+
+                return (
+                  metricsByShard.get(
+                    shard
+                  ) || {
+
+                    shard,
+
+                    status:
+                      "not_reported",
+
+                    passed: 0,
+
+                    failed: 0,
+
+                    skipped: 0,
+
+                    flaky: 0,
+
+                    didNotRun: 0,
+
+                    warnings: 0,
+
+                    errors: 0,
+
+                    diagTestRecords:
+                      0,
+
+                    exitCode:
+                      null,
+
+                    signals: []
+                  }
+                );
+              }
+            );
+
+
+          const sum =
+            key =>
+              rows.reduce(
+                (total, row) =>
+                  total +
+                  Number(
+                    row[key] || 0
+                  ),
+                0
+              );
+
+
+          const reported =
+            rows.filter(
+              row =>
+                row.status !==
+                "not_reported"
+            );
+
+
+          const cleanShards =
+            rows.filter(
+              row =>
+                row.status ===
+                "passed"
+            ).length;
+
+
+          const failedShards =
+            rows.filter(
+              row =>
+                row.status ===
+                "failed"
+            ).length;
+
+
+          const diagFailureShards =
+            rows.filter(
+              row =>
+                row.status ===
+                "passed_with_diag_failures"
+            ).length;
+
+
+          const diagWarningShards =
+            rows.filter(
+              row =>
+                row.status ===
+                "passed_with_diag_warnings"
+            ).length;
+
+
+          const missingShards =
+            rows.filter(
+              row =>
+                row.status ===
+                "not_reported"
+            ).length;
+
+
+          let overallIcon =
+            "✅";
+
+
+          let overallText =
+            "COMPLETE";
+
+
+          if (
+            missingShards > 0
+          ) {
+
+            overallIcon =
+              "⏺️";
+
+            overallText =
+              "INCOMPLETE";
+
+          } else if (
+            failedShards > 0 ||
+            process.env.TEST_RESULT ===
+              "failure"
+          ) {
+
+            overallIcon =
+              "❌";
+
+            overallText =
+              "PLAYWRIGHT FAILURES";
+
+          } else if (
+            diagFailureShards > 0
+          ) {
+
+            overallIcon =
+              "⚠️";
+
+            overallText =
+              "DIAG FAILURES";
+
+          } else if (
+            diagWarningShards > 0
+          ) {
+
+            overallIcon =
+              "🟡";
+
+            overallText =
+              "DIAG WARNINGS";
+          }
+
+
+          let output =
+            `# ${overallIcon} MrSID Viewer — Shard Matrix · ${overallText}\n\n`;
+
+
+          output +=
+            `> **8-way parallel Playwright execution** · ` +
+            `**1 worker per shard** · ` +
+            `all testcases included in the same suite.\n\n`;
+
+
+          output +=
+            "## 📊 Overall execution\n\n";
+
+
+          output +=
+            "| Shards | Tests | Passed | Failed | Skipped | Flaky | DIAG warnings | DIAG errors |\n";
+
+
+          output +=
+            "|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+
+
+          const totalTests =
+            reported.reduce(
+              (sum, row) =>
+                sum +
+                Number(
+                  row.diagTestRecords ||
+                  0
+                ),
+              0
+            );
+
+
+          output +=
+            `| **${reported.length}/${TOTAL_SHARDS}** | ` +
+            `**${totalTests}** | ` +
+            `**${sum("passed")}** | ` +
+            `**${sum("failed")}** | ` +
+            `**${sum("skipped")}** | ` +
+            `**${sum("flaky")}** | ` +
+            `**${sum("warnings")}** | ` +
+            `**${sum("errors")}** |\n\n`;
+
+
+          output +=
+            "## 🧪 Shard matrix\n\n";
+
+
+          output +=
+            "| Shard | Status | Tests | Passed | Failed | Skipped | Flaky | Warn | Error | Exit |\n";
+
+
+          output +=
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+
+
+          for (
+            const row of rows
+          ) {
+
+            const status =
+              row.status === "passed"
+                ? "✅ PASS"
+                : row.status ===
+                    "passed_with_diag_warnings"
+                  ? "🟡 WARN"
+                  : row.status ===
+                      "passed_with_diag_failures"
+                    ? "⚠️ DIAG FAIL"
+                    : row.status ===
+                        "failed"
+                      ? "❌ FAIL"
+                      : "⏺️ NOT REPORTED";
+
+
+            output +=
+              `| **${String(row.shard).padStart(2, "0")}/08** | ` +
+              `${status} | ` +
+              `${row.diagTestRecords} | ` +
+              `${row.passed} | ` +
+              `${row.failed} | ` +
+              `${row.skipped} | ` +
+              `${row.flaky} | ` +
+              `${row.warnings} | ` +
+              `${row.errors} | ` +
+              `${row.exitCode ?? "—"} |\n`;
+          }
+
+
+          output +=
+            "\n## 🔎 Shard details\n\n";
+
+
+          for (
+            const row of rows
+          ) {
+
+            const icon =
+              row.status === "failed"
+                ? "❌"
+                : row.status ===
+                    "passed_with_diag_failures"
+                  ? "⚠️"
+                  : row.status ===
+                      "passed_with_diag_warnings"
+                    ? "🟡"
+                    : row.status ===
+                        "not_reported"
+                      ? "⏺️"
+                      : "✅";
+
+
+            output +=
+              `<details><summary>${icon} Shard ${String(row.shard).padStart(2, "0")} · ${row.status.replaceAll("_", " ")}</summary>\n\n`;
+
+
+            output +=
+              `Tests: **${row.diagTestRecords}** · ` +
+              `Passed: **${row.passed}** · ` +
+              `Failed: **${row.failed}** · ` +
+              `Skipped: **${row.skipped}** · ` +
+              `Warnings: **${row.warnings}** · ` +
+              `Errors: **${row.errors}**\n\n`;
+
+
+            if (
+              row.signals?.length
+            ) {
+
+              output +=
+                "```text\n" +
+                row.signals.join("\n") +
+                "\n```\n\n";
+
+            } else {
+
+              output +=
+                "No DIAG warning/error signals detected.\n\n";
+            }
+
+
+            output +=
+              "</details>\n\n";
+          }
+
+
+          output +=
+            "## 🧭 Execution model\n\n";
+
+
+          output +=
+            "- Git-tracked test data comes from the repository checkout.\n";
+
+          output +=
+            "- Missing large/external fixtures are restored/downloaded into the same `test-data/` paths used by the existing test framework.\n";
+
+          output +=
+            "- All testcases participate in the same Playwright suite.\n";
+
+          output +=
+            "- The suite is divided across 8 GitHub Actions shards.\n";
+
+          output +=
+            "- Every shard uses one Playwright worker.\n";
+
+          output +=
+            "- `fail-fast: false` allows the remaining shards to continue when one shard fails.\n";
+
+          output +=
+            "- Only exact `[DIAG-DEBUG]` test-result records are used for diagnostic metrics.\n";
+
+
+          fs.appendFileSync(
+            process.env.GITHUB_STEP_SUMMARY,
+            output
+          );
+
+
+          fs.writeFileSync(
+            "run-matrix.json",
+            JSON.stringify(
+              {
+                totalShards:
+                  TOTAL_SHARDS,
+
+                reportedShards:
+                  reported.length,
+
+                missingShards,
+
+                cleanShards,
+
+                failedShards,
+
+                diagFailureShards,
+
+                diagWarningShards,
+
+                totalTests,
+
+                passed:
+                  sum("passed"),
+
+                failed:
+                  sum("failed"),
+
+                skipped:
+                  sum("skipped"),
+
+                flaky:
+                  sum("flaky"),
+
+                warnings:
+                  sum("warnings"),
+
+                errors:
+                  sum("errors"),
+
+                shards:
+                  rows
+              },
+              null,
+              2
+            )
+          );
+          NODE
+
+
+      # ────────────────────────────────────────────────────────────────────
+      # Upload consolidated matrix data
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "📦 Upload consolidated matrix data"
+        if: always()
+
+        uses: actions/upload-artifact@v7
+
+        with:
+          name: consolidated-run-matrix
+
+          path: run-matrix.json
+
+          if-no-files-found: ignore
+
+          retention-days: 7
+
+
+      # ════════════════════════════════════════════════════════════════════
+      # MERGE ALL SHARD BLOB REPORTS
+      # ════════════════════════════════════════════════════════════════════
+
+      - name: "🧾 Merge all Playwright shard reports"
+        shell: bash
+
+        run: |
+          set -euo pipefail
+
+
+          if find \
+            all-blob-reports \
+            -type f \
+            -name "*.zip" \
+            -print \
+            -quit \
+            2>/dev/null \
+            | grep -q .
+          then
+
+            npx playwright merge-reports \
+              --reporter=html \
+              ./all-blob-reports
+
           else
-            echo 'No Playwright blob reports were produced.' > playwright-report-unavailable.txt
+
+            echo \
+              "No blob reports were produced." \
+              > playwright-report-unavailable.txt
+
           fi
 
-      - name: Upload consolidated report
+
+      - name: "📊 Upload consolidated Playwright HTML report"
         if: always()
+
         uses: actions/upload-artifact@v7
+
         with:
           name: playwright-report
+
           path: |
             playwright-report/
             playwright-report-unavailable.txt
+
           if-no-files-found: ignore
+
           retention-days: 7
 
+
+  # ════════════════════════════════════════════════════════════════════════
+  # JOB 5 — EMAIL REPORT
+  #
+  # Existing reporter is retained.
+  #
+  # DAILY_REPORT_EMAILS:
+  #   gets the daily summary.
+  #
+  # FAILURE_ALERT_EMAILS:
+  #   gets the detailed report with relevant failure/warning/skipped
+  #   attachments where available.
+  # ════════════════════════════════════════════════════════════════════════
+
   email-report:
-    if: always() && needs.test.result != 'skipped'
-    needs: [test, dashboard]
-    name: Optional email report
+    name: "📨 Send QA email reports"
+
+    if: ${{ !cancelled() }}
+
+    needs:
+      - test
+      - dashboard
+
     runs-on: ubuntu-24.04
+
+    # Email problems should not hide the test-suite result.
     continue-on-error: true
+
+
     steps:
-      - name: Decide whether to send email
+
+      - name: "📧 Decide whether email should be sent"
         id: decision
+
         env:
-          SHOULD_SEND: ${{ github.event_name != 'workflow_dispatch' || inputs.send_report == true }}
-          DAILY_REPORT_EMAILS: ${{ secrets.DAILY_REPORT_EMAILS }}
-          FAILURE_ALERT_EMAILS: ${{ secrets.FAILURE_ALERT_EMAILS }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SHOULD_SEND:
+            ${{ github.event_name != 'workflow_dispatch' || inputs.send_report == true }}
+
+        shell: bash
+
         run: |
-          if [[ "$SHOULD_SEND" != "true" || -z "$SMTP_HOST" || -z "$SMTP_USER" || -z "$SMTP_PASS" || (-z "$DAILY_REPORT_EMAILS" && -z "$FAILURE_ALERT_EMAILS") ]]; then
-            echo "send=false" >> "$GITHUB_OUTPUT"
-            echo "Email report disabled or SMTP secrets/recipients are not configured."
+          if [[ "$SHOULD_SEND" == "true" ]]; then
+
+            echo "send=true" \
+              >> "$GITHUB_OUTPUT"
+
+
+            {
+              echo "## 📧 Email Report"
+              echo
+              echo "✅ Email report sending is enabled."
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+
           else
-            echo "send=true" >> "$GITHUB_OUTPUT"
+
+            echo "send=false" \
+              >> "$GITHUB_OUTPUT"
+
+
+            {
+              echo "## 📧 Email Report"
+              echo
+              echo "⏭️ Email report sending was disabled by manual input."
+              echo
+            } >> "$GITHUB_STEP_SUMMARY"
+
           fi
 
-      - name: Checkout repository
+
+      - name: "🔐 Check email configuration"
         if: steps.decision.outputs.send == 'true'
+
+        env:
+          DAILY_REPORT_EMAILS:
+            ${{ secrets.DAILY_REPORT_EMAILS }}
+
+          FAILURE_ALERT_EMAILS:
+            ${{ secrets.FAILURE_ALERT_EMAILS }}
+
+          SMTP_HOST:
+            ${{ secrets.SMTP_HOST }}
+
+          SMTP_PORT:
+            ${{ secrets.SMTP_PORT }}
+
+          SMTP_SECURE:
+            ${{ secrets.SMTP_SECURE }}
+
+          SMTP_USER:
+            ${{ secrets.SMTP_USER }}
+
+          SMTP_PASS:
+            ${{ secrets.SMTP_PASS }}
+
+          SMTP_FROM:
+            ${{ secrets.SMTP_FROM }}
+
+        shell: bash
+
+        run: |
+          has_value() {
+            [[ -n "${!1:-}" ]] \
+              && echo "✅ configured" \
+              || echo "❌ missing"
+          }
+
+
+          echo \
+            "DAILY_REPORT_EMAILS:  $(has_value DAILY_REPORT_EMAILS)"
+
+          echo \
+            "FAILURE_ALERT_EMAILS: $(has_value FAILURE_ALERT_EMAILS)"
+
+          echo \
+            "SMTP_HOST:            $(has_value SMTP_HOST)"
+
+          echo \
+            "SMTP_PORT:            $(has_value SMTP_PORT)"
+
+          echo \
+            "SMTP_SECURE:          $(has_value SMTP_SECURE)"
+
+          echo \
+            "SMTP_USER:            $(has_value SMTP_USER)"
+
+          echo \
+            "SMTP_PASS:            $(has_value SMTP_PASS)"
+
+          echo \
+            "SMTP_FROM:            $(has_value SMTP_FROM)"
+
+
+          {
+            echo "## 🔐 Email configuration"
+            echo
+            echo "| Setting | Status |"
+            echo "|---|---|"
+            echo "| DAILY_REPORT_EMAILS | $(has_value DAILY_REPORT_EMAILS) |"
+            echo "| FAILURE_ALERT_EMAILS | $(has_value FAILURE_ALERT_EMAILS) |"
+            echo "| SMTP_HOST | $(has_value SMTP_HOST) |"
+            echo "| SMTP_PORT | $(has_value SMTP_PORT) |"
+            echo "| SMTP_SECURE | $(has_value SMTP_SECURE) |"
+            echo "| SMTP_USER | $(has_value SMTP_USER) |"
+            echo "| SMTP_PASS | $(has_value SMTP_PASS) |"
+            echo "| SMTP_FROM | $(has_value SMTP_FROM) |"
+            echo
+            echo "> Secret values are not printed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
+      - name: "📥 Checkout repository"
+        if: steps.decision.outputs.send == 'true'
+
         uses: actions/checkout@v7
 
-      - name: Setup Node.js 22
+
+      - name: "⬢ Setup Node.js ${{ env.NODE_VERSION }}"
         if: steps.decision.outputs.send == 'true'
+
         uses: actions/setup-node@v7
+
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
+
           cache: npm
 
-      - name: Install dependencies
+
+      - name: "📦 Install dependencies"
         if: steps.decision.outputs.send == 'true'
+
         run: npm ci
 
-      - name: Download diagnostics
+
+      # ────────────────────────────────────────────────────────────────────
+      # Download all shard diagnostics.
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "⬇️ Download diagnostics"
         if: steps.decision.outputs.send == 'true'
+
         uses: actions/download-artifact@v8
+
         with:
-          pattern: diagnostics-*
+          pattern: diagnostics-shard-*
+
           merge-multiple: true
+
           path: diagnostics
 
-      - name: Download test results
+
+      - name: "⬇️ Download test results"
         if: steps.decision.outputs.send == 'true'
+
         uses: actions/download-artifact@v8
+
         with:
-          pattern: test-results-*
+          pattern: test-results-shard-*
+
           merge-multiple: true
+
           path: test-results
 
-      - name: Download Playwright blob reports
+
+      - name: "⬇️ Download shard blob reports"
         if: steps.decision.outputs.send == 'true'
+
         uses: actions/download-artifact@v8
+
         with:
-          pattern: blob-report-*
+          pattern: blob-report-shard-*
+
           merge-multiple: true
+
           path: blob-report
 
-      - name: Send consolidated report
+
+      # ────────────────────────────────────────────────────────────────────
+      # Existing consolidated reporter
+      # ────────────────────────────────────────────────────────────────────
+
+      - name: "📨 Send DAILY_REPORT_EMAILS + FAILURE_ALERT_EMAILS"
         if: steps.decision.outputs.send == 'true'
+
         env:
           CI: "true"
-          DAILY_REPORT_EMAILS: ${{ secrets.DAILY_REPORT_EMAILS }}
-          FAILURE_ALERT_EMAILS: ${{ secrets.FAILURE_ALERT_EMAILS }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          SMTP_FROM: ${{ secrets.SMTP_FROM }}
-        run: npm run report:email
+
+          DAILY_REPORT_EMAILS:
+            ${{ secrets.DAILY_REPORT_EMAILS }}
+
+          FAILURE_ALERT_EMAILS:
+            ${{ secrets.FAILURE_ALERT_EMAILS }}
+
+          SMTP_HOST:
+            ${{ secrets.SMTP_HOST }}
+
+          SMTP_PORT:
+            ${{ secrets.SMTP_PORT }}
+
+          SMTP_SECURE:
+            ${{ secrets.SMTP_SECURE }}
+
+          SMTP_USER:
+            ${{ secrets.SMTP_USER }}
+
+          SMTP_PASS:
+            ${{ secrets.SMTP_PASS }}
+
+          SMTP_FROM:
+            ${{ secrets.SMTP_FROM }}
+
+        shell: bash
+
+        run: |
+          set +e
+
+
+          npm run report:email
+
+
+          EMAIL_EXIT=$?
+
+
+          set -e
+
+
+          if [[ "$EMAIL_EXIT" -eq 0 ]]; then
+
+            echo \
+              "✅ Both email report flows completed."
+
+
+            {
+              echo "## 📬 Email delivery"
+              echo
+              echo "✅ `npm run report:email` completed successfully."
+              echo
+              echo "- DAILY_REPORT_EMAILS: processed"
+              echo "- FAILURE_ALERT_EMAILS: processed"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+          else
+
+            echo \
+              "❌ Email report command failed with exit code $EMAIL_EXIT."
+
+
+            {
+              echo "## 📬 Email delivery"
+              echo
+              echo "❌ `npm run report:email` failed with exit code **$EMAIL_EXIT**."
+              echo
+              echo "Check SMTP configuration and the reporter logs."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+          fi
+
+
+          exit "$EMAIL_EXIT"
+
+
+  # ════════════════════════════════════════════════════════════════════════
+  # FINAL STATUS
+  #
+  # Gives the workflow a clear final step after email processing.
+  # ════════════════════════════════════════════════════════════════════════
+
+  finish:
+    name: "✅ Test Suite Finished"
+
+    if: ${{ !cancelled() }}
+
+    needs:
+      - test
+      - dashboard
+      - email-report
+
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      - name: "✅ Complete"
+        shell: bash
+
+        env:
+          TEST_RESULT:
+            ${{ needs.test.result }}
+
+          DASHBOARD_RESULT:
+            ${{ needs.dashboard.result }}
+
+          EMAIL_RESULT:
+            ${{ needs.email-report.result }}
+
+        run: |
+          {
+            echo "# 🏁 MrSID Viewer Test Suite Finished"
+            echo
+            echo "| Stage | Result |"
+            echo "|---|---|"
+            echo "| 8-shard Playwright suite | **${TEST_RESULT}** |"
+            echo "| Consolidated dashboard | **${DASHBOARD_RESULT}** |"
+            echo "| Email report | **${EMAIL_RESULT}** |"
+            echo
+            echo "All requested workflow stages have completed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
+          echo "🏁 MrSID Viewer Test Suite Finished"
+          echo "════════════════════════════════════════════════════════════"
+          echo "Playwright : ${TEST_RESULT}"
+          echo "Dashboard  : ${DASHBOARD_RESULT}"
+          echo "Email      : ${EMAIL_RESULT}"
+          echo "════════════════════════════════════════════════════════════"
