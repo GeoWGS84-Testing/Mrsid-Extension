@@ -97,7 +97,7 @@ Client-side rejection tests (03-*) do **not**.
 ## GitHub Actions
 
 The workflow at `.github/workflows/playwright.yml` runs the
-`chromium-extension` project in eight shards. It downloads the provided
+`chromium-extension` project in four parallel shards. It downloads the provided
 GeoTIFF fixtures from Google Drive; the three large fixtures are downloaded
 only when `run_large_file_tests` is enabled. Large raster files are not
 committed to Git.
@@ -113,7 +113,7 @@ clean CI checkout until IDs are added:
 - `boundary/tiny.sid`
 - `boundary/VALID_UPPER_MrSID_Extension.SID`
 
-Add available IDs as a JSON object in the repository variable
+Add available IDs as a JSON object in the repository variable or secret
 `GEOVIEWER_EXTRA_FIXTURE_IDS`, keyed by paths relative to `test-data/`, for
 example `{"valid/01_NAIP_2014_WGS84.sid":"DRIVE_FILE_ID"}`.
 
