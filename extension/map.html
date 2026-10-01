@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>High Fidelity Geoviewer</title>
+    <link rel="icon" href="pic1.png" type="image/png">
+    <link rel="stylesheet" href="leaflet/leaflet.css" />
+    <script src="leaflet/leaflet.js"></script>
+    <link rel="stylesheet" href="style.css" />
+    <style>
+        body,
+        html,
+        #map {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        .vignette {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            box-shadow: inset 0 0 150px rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        /* Overlay card (bottom-left) */
+        .map-overlay-card {
+            position: absolute;
+            bottom: 25px;
+            left: 25px;
+            z-index: 1050;
+            background: rgba(6, 8, 10, 0.88);
+            backdrop-filter: blur(18px);
+            border: 1px solid rgba(16, 185, 129, 0.12);
+            border-radius: 16px;
+            padding: 18px 20px;
+            width: 240px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            color: #ecfdf5;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .layer-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .layer-item-name {
+            font-size: 0.85rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 150px;
+            cursor: pointer;
+        }
+
+        .layer-item-name:hover {
+            color: var(--accent-blue);
+        }
+
+        .zoom-to-btn {
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            color: #6ee7b7;
+            font-size: 0.65rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .zoom-to-btn:hover {
+            background: rgba(16, 185, 129, 0.4);
+            color: white;
+        }
+
+        /* Metadata toggle button */
+        .meta-toggle-btn {
+            margin-top: 12px;
+            width: 100%;
+            padding: 8px 0;
+            background: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+            color: #6ee7b7;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+
+        .meta-toggle-btn:hover {
+            background: rgba(16, 185, 129, 0.22);
+            border-color: rgba(16, 185, 129, 0.5);
+        }
+
+        /* Metadata slide-out panel */
+        .meta-panel {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 360px;
+            height: 100vh;
+            background: rgba(6, 8, 10, 0.92);
+            backdrop-filter: blur(20px);
+            border-left: 1px solid rgba(16, 185, 129, 0.15);
+            z-index: 1100;
+            display: flex;
+            flex-direction: column;
+            transform: translateX(0);
+            transition: transform 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+            box-shadow: -8px 0 40px rgba(0, 0, 0, 0.6);
+        }
+
+        .meta-panel.hidden {
+            transform: translateX(100%);
+            pointer-events: none;
+        }
+
+        .meta-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 18px 20px;
+            border-bottom: 1px solid rgba(16, 185, 129, 0.12);
+            font-family: 'Outfit', sans-serif;
+            font-weight: 700;
+            font-size: 0.9rem;
+            color: #ecfdf5;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .meta-close-btn {
+            background: none;
+            border: none;
+            color: #6ee7b7;
+            font-size: 1.4rem;
+            cursor: pointer;
+            padding: 0 4px;
+            line-height: 1;
+        }
+
+        .meta-close-btn:hover {
+            color: #ef4444;
+        }
+
+        .meta-panel-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+        }
+
+        .meta-panel-body::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .meta-panel-body::-webkit-scrollbar-thumb {
+            background: rgba(16, 185, 129, 0.3);
+            border-radius: 4px;
+        }
+
+        .meta-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding: 9px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .meta-row-label {
+            font-family: 'Inter', sans-serif;
+            font-size: 0.72rem;
+            font-weight: 500;
+            color: #6ee7b7;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            flex-shrink: 0;
+            max-width: 45%;
+        }
+
+        .meta-row-value {
+            font-family: 'Inter', sans-serif;
+            font-size: 0.78rem;
+            font-weight: 400;
+            color: #ecfdf5;
+            text-align: right;
+            word-break: break-all;
+            max-width: 52%;
+        }
+
+        .meta-section {
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.68rem;
+            font-weight: 700;
+            color: #10b981;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 14px 0 6px;
+            margin-top: 4px;
+        }
+
+        @keyframes bigUploadSpin {
+            0% { transform: translate(-50%) rotate(0deg); }
+            100% { transform: translate(-50%) rotate(360deg); }
+        }
+
+        .large-upload-overlay {
+            position: fixed;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10000;
+            background: rgba(10, 14, 20, 0.95);
+            border: 1px solid rgba(59, 130, 246, 0.25);
+            padding: 18px 32px;
+            border-radius: 12px;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            min-width: 380px;
+            max-width: 500px;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .large-upload-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid rgba(59, 130, 246, 0.15);
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            flex-shrink: 0;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .compression-badge {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #34d399;
+            padding: 2px 6px;
+            border-radius: 12px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            margin-left: 8px;
+            display: inline-flex;
+            align-items: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map"></div>
+    <div class="vignette"></div>
+
+    <div class="map-overlay-card">
+        <div style="margin-bottom: 12px; display: flex; align-items: center;">
+            <img src="logo.png" alt="LizardTech Logo" style="height: 35px; object-fit: contain;" />
+        </div>
+        <div id="layerList" style="margin: 10px 0; max-height: 150px; overflow-y: auto;">
+            <!-- Layers appended here -->
+        </div>
+
+        <div class="metadata-grid" style="grid-template-columns: 1fr; gap: 8px;">
+            <div class="meta-item">
+                <div class="meta-label">Zoom Level</div>
+                <div class="meta-value" id="zoomLevel">15</div>
+            </div>
+            <div class="meta-item">
+                <div class="meta-label">Rendering Mode</div>
+                <div class="meta-value" style="color: var(--success);">Lanczos / High-Res</div>
+            </div>
+        </div>
+
+        <div style="margin-top: 15px;">
+            <div class="meta-label">Overlay Opacity</div>
+            <input type="range" id="opacityRange" min="0" max="100" value="100"
+                style="width: 100%; background: var(--accent-blue);">
+        </div>
+
+        <button id="mapUploadBtn" class="meta-toggle-btn" style="background: rgba(59, 130, 246, 0.15); border-color: rgba(59, 130, 246, 0.3); color: #93c5fd; margin-top: 15px; margin-bottom: 5px;">Upload Image</button>
+        <input type="file" id="mapFileInput" style="display: none;" accept=".sid,.tif,.tiff" multiple />
+
+        <div id="uploadStatusContainer" style="display: none; margin-top: 10px; font-size: 0.75rem; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px;">
+            <div id="uploadStatusText" style="color: #93c5fd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Uploading...</div>
+            <div style="background: rgba(255,255,255,0.1); height: 4px; border-radius: 2px; margin-top: 4px; overflow: hidden;">
+                <div id="uploadProgressBar" style="background: var(--accent-blue); width: 0%; height: 100%; transition: width 0.1s;"></div>
+            </div>
+        </div>
+
+        <button id="metaToggleBtn" class="meta-toggle-btn">Show Metadata</button>
+    </div>
+
+    <!-- Large Centered Bottom Upload Overlay -->
+    <div id="largeUploadOverlay" class="large-upload-overlay" style="display: none;">
+        <div class="large-upload-spinner"></div>
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+            <div id="largeUploadStatusText" style="color: #93c5fd; font-size: 0.85rem; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 380px;">Initializing Vortex Engine...</div>
+            <div style="background: rgba(255,255,255,0.08); height: 6px; border-radius: 3px; overflow: hidden; width: 100%;">
+                <div id="largeUploadProgressBar" style="background: #3b82f6; width: 0%; height: 100%; transition: width 0.1s;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Full Metadata Panel -->
+    <div id="metaPanel" class="meta-panel hidden">
+        <div class="meta-panel-header">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <img src="logo.png" alt="LizardTech Logo" style="height: 25px; object-fit: contain;" />
+                <span>File Metadata</span>
+            </div>
+            <button id="metaCloseBtn" class="meta-close-btn">&times;</button>
+        </div>
+        <div id="metaPanelBody" class="meta-panel-body"></div>
+    </div>
+
+    <script src="map.js"></script>
+</body>
+
+</html>

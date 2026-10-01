@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "MrSID Viewer",
+  "version": "1.8",
+  "icons": {
+    "16": "pic1.png",
+    "32": "pic1.png",
+    "48": "pic1.png",
+    "128": "pic1.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "pic1.png",
+      "32": "pic1.png",
+      "48": "pic1.png",
+      "128": "pic1.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://api.geowgs84.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data: blob: http: https:;"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "leaflet/*",
+        "leaflet/images/*",
+        "map.html",
+        "map.js",
+        "style.css",
+        "pic1.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

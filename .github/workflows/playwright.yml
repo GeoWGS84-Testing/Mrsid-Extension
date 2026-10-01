@@ -1,0 +1,332 @@
+name: Playwright Tests - GeoViewer Extension
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+    inputs:
+      workers:
+        description: Workers per shard
+        required: false
+        default: "1"
+        type: choice
+        options: ["1", "2", "4"]
+      run_large_file_tests:
+        description: Download and run large-file fixtures
+        required: false
+        default: false
+        type: boolean
+      send_report:
+        description: Send optional email report
+        required: false
+        default: true
+        type: boolean
+      debug_mode:
+        description: Enable Playwright debug logging
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: playwright-geoviewer-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Provision and validate inputs
+    runs-on: ubuntu-24.04
+    env:
+      RUN_LARGE_FILE_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_large_file_tests == true && '1' || '0' }}
+      GEOVIEWER_EXTRA_FIXTURE_IDS: ${{ vars.GEOVIEWER_EXTRA_FIXTURE_IDS || '{}' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Python and Google Drive downloader
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install gdown
+        run: python -m pip install --disable-pip-version-check gdown==6.4.1
+
+      - name: Validate extension and provision fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f extension/manifest.json || {
+            echo "::error::Missing extension/manifest.json"
+            exit 1
+          }
+
+          fixture_root="$GITHUB_WORKSPACE/ci-dependencies/test-data"
+          mkdir -p "$fixture_root"
+          cp -a test-data/. "$fixture_root/"
+
+          download_fixture() {
+            local file_id="$1"
+            local relative_path="$2"
+            local destination="$fixture_root/$relative_path"
+            mkdir -p "$(dirname "$destination")"
+            python -m gdown --fuzzy "https://drive.google.com/file/d/${file_id}/view" -O "$destination"
+            test -s "$destination" || {
+              echo "::error::Fixture download is empty: $relative_path"
+              exit 1
+            }
+          }
+
+          download_fixture 1WsnRDjSQmK7DlRLK5VJmWgbZtA-_Q5BP valid/Valid_GeoTIFF.tiff
+          download_fixture 1uQjobUyiGCqPtJaJKNcTN-gcjW1dn0cY valid/Valid_GeoTIF.tif
+          download_fixture 1ysP5s_ZT5g-HIJYVPYVjcsbnAmCH9_y4 valid/01_multi_file_set_2_0.tif
+          download_fixture 1Km1grl9wsfUJKL4wFzKSZLCAntk5BIYs valid/01_multi_file_set_0_0.tif
+
+          if [[ "$RUN_LARGE_FILE_TESTS" == "1" ]]; then
+            download_fixture 1WaxD-XaPU8lTbEUflrnKdfyr6jCny123 valid/large_1GB_MrSID.sid
+            download_fixture 1uxqHpJ1UvRoehvc7Qr3iGzz71KAl84UT valid/large_1.3GB_MrSID_alaska_eox_007of016.sid
+            download_fixture 188Zhju97yGKYLpA-shobecd_We7DYbOw valid/S1A_Ireland_Complex_Mosaic_May2015_20m_EPSG2157_1.69GB.tif
+          else
+            echo "Large-file fixtures omitted; enable run_large_file_tests to download them."
+          fi
+
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          let fixtures;
+          try {
+            fixtures = JSON.parse(process.env.GEOVIEWER_EXTRA_FIXTURE_IDS || '{}');
+          } catch (error) {
+            throw new Error(`GEOVIEWER_EXTRA_FIXTURE_IDS must be valid JSON: ${error.message}`);
+          }
+
+          const root = path.resolve('ci-dependencies/test-data');
+          for (const [relativePath, fileId] of Object.entries(fixtures)) {
+            if (typeof fileId !== 'string' || !/^[\w-]+$/.test(fileId)) {
+              throw new Error(`Invalid Drive file ID for ${relativePath}`);
+            }
+            const destination = path.resolve(root, relativePath);
+            if (!destination.startsWith(`${root}${path.sep}`)) {
+              throw new Error(`Fixture path must stay under test-data/: ${relativePath}`);
+            }
+            fs.mkdirSync(path.dirname(destination), { recursive: true });
+            const result = spawnSync(
+              'python',
+              ['-m', 'gdown', '--fuzzy', `https://drive.google.com/file/d/${fileId}/view`, '-O', destination],
+              { stdio: 'inherit' },
+            );
+            if (result.status !== 0 || !fs.existsSync(destination) || fs.statSync(destination).size === 0) {
+              throw new Error(`Could not provision fixture: ${relativePath}`);
+            }
+          }
+          NODE
+
+          npx playwright test --list --project=chromium-extension | tee "$RUNNER_TEMP/test-list.txt"
+          discovered=$(sed -n 's/^Total: \([0-9][0-9]*\) tests.*/\1/p' "$RUNNER_TEMP/test-list.txt" | tail -n 1)
+          if [[ ! "$discovered" =~ ^[0-9]+$ || "$discovered" -lt 55 ]]; then
+            echo "::error::Expected at least 55 discovered tests for chromium-extension; found '${discovered:-unknown}'."
+            exit 1
+          fi
+          echo "Tests discovered: $discovered" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload provisioned fixtures
+        uses: actions/upload-artifact@v7
+        with:
+          name: geoviewer-ci-inputs
+          path: ci-dependencies/test-data/
+          if-no-files-found: error
+          retention-days: 1
+
+  test:
+    needs: preflight
+    name: Shard ${{ matrix.shard }}/8 - chromium-extension
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download provisioned fixtures
+        uses: actions/download-artifact@v8
+        with:
+          name: geoviewer-ci-inputs
+          path: ${{ runner.temp }}/geoviewer-ci/test-data
+
+      - name: Install provisioned fixtures
+        run: cp -a "$RUNNER_TEMP/geoviewer-ci/test-data/." test-data/
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright shard ${{ matrix.shard }}/8
+        env:
+          CI: "true"
+          HEADLESS: "false"
+          PW_WORKERS: ${{ inputs.workers || '1' }}
+          DEBUG: ${{ inputs.debug_mode == true && 'pw:api,pw:browser' || '' }}
+          RUN_LARGE_FILE_TESTS: ${{ inputs.run_large_file_tests == true && '1' || '0' }}
+          ENABLE_EMAIL_REPORTER: "false"
+          VISUAL_STEP_DELAY_MS: "0"
+          GEOVIEWER_VISUAL_DEMO: "0"
+        shell: bash
+        run: |
+          set -o pipefail
+          xvfb-run -a npx playwright test \
+            --project=chromium-extension \
+            --workers="$PW_WORKERS" \
+            --shard=${{ matrix.shard }}/8 2>&1 | tee "shard-${{ matrix.shard }}.log"
+
+      - name: Upload shard log and results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.shard }}
+          path: |
+            shard-${{ matrix.shard }}.log
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Playwright blob report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: blob-report-${{ matrix.shard }}
+          path: blob-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  dashboard:
+    if: always()
+    needs: test
+    name: Consolidated Playwright report
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download shard reports
+        uses: actions/download-artifact@v8
+        with:
+          pattern: blob-report-*
+          merge-multiple: true
+          path: blob-reports
+
+      - name: Merge HTML report
+        run: |
+          if find blob-reports -type f -name '*.zip' -print -quit | grep -q .; then
+            npx playwright merge-reports --reporter=html blob-reports
+          else
+            echo 'No Playwright blob reports were produced.' > playwright-report-unavailable.txt
+          fi
+
+      - name: Upload consolidated report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            playwright-report-unavailable.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
+  email-report:
+    if: always()
+    needs: [test, dashboard]
+    name: Optional email report
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Decide whether to send email
+        id: decision
+        env:
+          SHOULD_SEND: ${{ github.event_name != 'workflow_dispatch' || inputs.send_report == true }}
+          DAILY_REPORT_EMAILS: ${{ secrets.DAILY_REPORT_EMAILS }}
+          FAILURE_ALERT_EMAILS: ${{ secrets.FAILURE_ALERT_EMAILS }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+        run: |
+          if [[ "$SHOULD_SEND" != "true" || -z "$SMTP_HOST" || -z "$SMTP_USER" || -z "$SMTP_PASS" || (-z "$DAILY_REPORT_EMAILS" && -z "$FAILURE_ALERT_EMAILS") ]]; then
+            echo "send=false" >> "$GITHUB_OUTPUT"
+            echo "Email report disabled or SMTP secrets/recipients are not configured."
+          else
+            echo "send=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.decision.outputs.send == 'true'
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        if: steps.decision.outputs.send == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.decision.outputs.send == 'true'
+        run: npm ci
+
+      - name: Download shard reports
+        if: steps.decision.outputs.send == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: blob-report-*
+          merge-multiple: true
+          path: blob-reports
+
+      - name: Send email report
+        if: steps.decision.outputs.send == 'true'
+        env:
+          CI: "true"
+          DAILY_REPORT_EMAILS: ${{ secrets.DAILY_REPORT_EMAILS }}
+          FAILURE_ALERT_EMAILS: ${{ secrets.FAILURE_ALERT_EMAILS }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+        run: npx playwright merge-reports --reporter=./reporter/email-reporter.cjs blob-reports

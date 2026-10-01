@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Premium Geoviewer</title>
+  <link rel="icon" href="pic1.png" type="image/png">
+  <link rel="stylesheet" href="style.css">
+
+  <style>
+    /* Zoom controls minimal styling */
+    .zoom-controls {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .zoom-controls button {
+      padding: 5px 10px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    #previewImage {
+      transition: transform 0.3s ease;
+      transform-origin: center;
+      max-width: 100%;
+    }
+
+    #settingsToggleBtn:hover {
+      transform: rotate(45deg);
+      color: var(--accent-blue) !important;
+    }
+
+    #openTabBtn:hover {
+      transform: scale(1.1);
+      color: var(--accent-blue) !important;
+    }
+
+    #closeSettingsBtn:hover {
+      opacity: 1 !important;
+      color: var(--danger);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <img src="logo.png" alt="LizardTech Logo" style="height: 45px; object-fit: contain;" />
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div id="timer" class="badge">&#x23F1; 0 sec</div>
+        <button id="openTabBtn"
+          style="background: none; border: none; color: var(--text-secondary); font-size: 1.1rem; cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease; border-radius: 50%;"
+          title="Open in New Tab">&#x2197;&#xFE0F;</button>
+        <button id="settingsToggleBtn"
+          style="display: none; background: none; border: none; color: var(--text-secondary); font-size: 1.2rem; cursor: pointer; padding: 4px; align-items: center; justify-content: center; transition: all 0.3s ease; border-radius: 50%;"
+          title="Connection Settings">&#x2699;&#xFE0F;</button>
+      </div>
+    </header>
+    <div id="progressContainer" style="display: none; width: 100%; margin: 10px 0;">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+        <span id="progressText" style="font-size: 12px;">0%</span>
+        <span id="speedText" style="font-size: 12px;">0 MB/s</span>
+      </div>
+      <progress id="progressBar" value="0" max="100" style="width: 100%; height: 8px; border-radius: 4px;"></progress>
+    </div>
+
+    <!-- ⚙️ CONNECTION SETTINGS DRAWER -->
+    <div id="settingsDrawer"
+      style="display: none; background: rgba(16, 185, 129, 0.03); border: 1px solid var(--glass-border); border-radius: 16px; padding: 16px; backdrop-filter: blur(10px);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3
+          style="margin: 0; font-size: 0.8rem; font-family: 'Outfit', sans-serif; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">
+          Connection Settings</h3>
+        <span id="closeSettingsBtn"
+          style="cursor: pointer; font-size: 0.8rem; opacity: 0.6; padding: 4px; transition: opacity 0.2s;">✕</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <label for="backendUrlInput"
+          style="font-size: 0.65rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Backend
+          Cloud / Local URL</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="backendUrlInput" placeholder="https://api.geowgs84.com"
+            style="flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(0, 0, 0, 0.4); color: white; font-size: 0.85rem; font-family: 'Inter', sans-serif;" />
+          <button id="saveSettingsBtn" style="display: none;">Save</button>
+        </div>
+        <span style="font-size: 0.65rem; opacity: 0.6; color: var(--accent-blue);">This URL is configured strictly via
+          the .env file in the extension root directory.</span>
+      </div>
+    </div>
+
+    <input type="file" id="fileInput" accept=".sid,.tif,.tiff,.jpg,.png" multiple hidden />
+
+    <div id="dropArea">
+      <div id="dropText">
+        <div class="icon-container">
+          <i class="icon">&#x1F6F0;&#xFE0F;</i>
+        </div>
+        <p>Drop Imagery File</p>
+        <span>Support for .SID, .TIF, .TIFF</span>
+      </div>
+
+      <div id="loader">
+        <div class="spinner-outer">
+          <div class="spinner-inner"></div>
+        </div>
+        <p style="font-weight: 600; color: var(--accent-blue);">EXTRACTING GEODATA</p>
+        <p style="font-size: 0.75rem; opacity: 0.6;">PLEASE WAIT...</p>
+      </div>
+
+      <img id="previewImage" />
+
+      <!-- ✅ ZOOM CONTROLS ADDED -->
+      <div class="zoom-controls">
+        <button id="zoomIn">+</button>
+        <button id="zoomOut">-</button>
+        <button id="resetZoom">Reset</button>
+      </div>
+    </div>
+
+    <div class="status-pill">
+      <div class="status-dot active" id="statusDot"></div>
+      <span id="statusValue">System Ready</span>
+    </div>
+
+    <div class="metadata-card">
+      <div class="metadata-grid" id="metadataGrid">
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="showMap" class="btn btn-primary">
+        <span>VIEW ON MAP</span>
+        <i>&#x1F5FA;&#xFE0F;</i>
+      </button>
+      <button id="downloadTiff" class="btn btn-primary"
+        style="background: var(--accent-gradient); color: #05070a; display: none;">
+        <span>DOWNLOAD TIFF</span>
+        <i>&#x2913;</i>
+      </button>
+      <button id="clearBtn" class="btn btn-danger">CLEAR</button>
+    </div>
+
+    <!-- Tiled download container for large files -->
+    <div id="partDownloadContainer"
+      style="display: none; margin-top: 15px; background: rgba(16, 185, 129, 0.03); border: 1px solid var(--glass-border); border-radius: 12px; padding: 12px;">
+      <h3 style="margin: 0 0 8px 0; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">
+        Download Full Resolution Parts</h3>
+      <p style="font-size: 0.65rem; opacity: 0.6; margin: 0 0 10px 0;">This file is very large. Select a grid part to
+        download it at 100% resolution.</p>
+      <div id="partGrid" style="display: grid; gap: 6px;"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>

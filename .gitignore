@@ -1,0 +1,15 @@
+node_modules/
+playwright-report/
+test-results/
+blob-report/
+.auth/
+*.log
+.env
+.env.*
+test-data/valid/large_*
+test-data/valid/Valid_GeoTIF.tif
+test-data/valid/Valid_GeoTIFF.tiff
+test-data/valid/01_multi_file_set_*.tif
+test-data/valid/S1A_Ireland_Complex_Mosaic_May2015_20m_EPSG2157*.tif
+test-data/**/*.sid
+!test-data/**/.gitkeep

@@ -1,0 +1,33 @@
+{
+  "name": "mrsid-viewer-playwright",
+  "version": "1.0.0",
+  "description": "Playwright POM automation for MrSID Viewer Chrome extension (V1.8)",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "cross-env HEADLESS=false playwright test",
+    "test:smoke": "cross-env HEADLESS=false playwright test --grep @smoke",
+    "test:p0": "cross-env HEADLESS=false playwright test --grep @p0",
+    "test:upload": "cross-env HEADLESS=false playwright test --grep @upload",
+    "test:map": "cross-env HEADLESS=false playwright test --grep @map",
+    "test:gis": "cross-env HEADLESS=false playwright test tests/06-gis.edge.spec.js",
+    "test:boundary": "cross-env HEADLESS=false playwright test tests/07-boundary.names.spec.js",
+    "test:invalid": "cross-env HEADLESS=false playwright test tests/03-popup.upload.invalid.spec.js",
+    "test:large": "cross-env HEADLESS=false playwright test --grep @large-file",
+    "test:report": "playwright show-report",
+    "install:browsers": "playwright install chromium",
+    "report:email": "playwright merge-reports --reporter=./reporter/email-reporter.cjs blob-report",
+    "test:extra": "cross-env HEADLESS=false playwright test tests/09-metadata.map.extra.spec.js",
+    "test:p1": "cross-env HEADLESS=false playwright test --grep @p1",
+    "test:security": "cross-env HEADLESS=false playwright test --grep @security",
+    "test:all": "cross-env HEADLESS=false playwright test --grep-invert @large-file"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.4.5"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.15"
+  }
+}
