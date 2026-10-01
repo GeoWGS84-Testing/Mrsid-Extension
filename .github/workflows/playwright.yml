@@ -60,44 +60,34 @@ jobs:
     continue-on-error: true
 
     steps:
-      - name: "🗑️ Delete previous completed runs of THIS workflow"
+      - name: "🗑️ Delete ALL previous completed runs of THIS workflow"
         uses: actions/github-script@v9
         with:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const currentRunId = context.runId;
-      
             const workflowName = context.workflow;
-      
+
             core.info(`Current workflow: ${workflowName}`);
-      
+            core.info(`Current run id: ${currentRunId}`);
+
             const workflows = await github.paginate(
               github.rest.actions.listRepoWorkflows,
-              {
-                owner,
-                repo,
-                per_page: 100,
-              }
+              { owner, repo, per_page: 100 }
             );
-      
-            const workflow = workflows.find(
-              (wf) => wf.name === workflowName
-            );
-            if (!workflow) {
-              core.warning(
-                `Workflow not found: ${workflowName}`
-              );
 
+            const workflow = workflows.find((wf) => wf.name === workflowName);
+            if (!workflow) {
+              core.warning(`Workflow not found by name: ${workflowName}`);
               await core.summary
                 .addHeading("🧹 Previous Run Cleanup")
-                .addRaw(
-                  `Workflow not found: ${workflowName}`
-                )
+                .addRaw(`Workflow not found: ${workflowName}`)
                 .write();
-
               return;
             }
+
+            core.info(`Resolved workflow id: ${workflow.id} (${workflow.path})`);
 
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRuns,
@@ -110,18 +100,21 @@ jobs:
               }
             );
 
+            // Delete EVERY previous completed run — keep none.
+            // Do NOT use .slice(N); that was keeping the N newest runs.
             const previousRuns = runs
-            .filter(
-              (run) => run.id !== currentRunId
-            )
-            .sort(
-              (a, b) =>
-                new Date(b.created_at) - new Date(a.created_at)
-            )
-            .slice(5);
+              .filter((run) => run.id !== currentRunId)
+              .sort(
+                (a, b) =>
+                  new Date(b.created_at) - new Date(a.created_at)
+              );
+
+            core.info(`API completed runs: ${runs.length}`);
+            core.info(`Previous completed runs to delete: ${previousRuns.length}`);
 
             let deleted = 0;
             let failed = 0;
+            const failureDetails = [];
 
             for (const run of previousRuns) {
               try {
@@ -130,19 +123,15 @@ jobs:
                   repo,
                   run_id: run.id,
                 });
-
                 deleted++;
-
                 core.info(
-                  `Deleted run #${run.run_number}`
+                  `Deleted run #${run.run_number} (id=${run.id}, conclusion=${run.conclusion})`
                 );
-
               } catch (error) {
                 failed++;
-
-                core.warning(
-                  `Failed deleting run #${run.run_number}: ${error.message}`
-                );
+                const msg = `Failed deleting run #${run.run_number} (id=${run.id}): ${error.message}`;
+                failureDetails.push(msg);
+                core.warning(msg);
               }
             }
 
@@ -151,27 +140,25 @@ jobs:
               .addTable([
                 [
                   { data: "Metric", header: true },
-                  { data: "Count", header: true }
+                  { data: "Count", header: true },
                 ],
-                [
-                  "Workflow",
-                  workflowName
-                ],
-                [
-                  "Previous completed runs found",
-                  String(previousRuns.length)
-                ],
-                [
-                  "Runs deleted",
-                  String(deleted)
-                ],
-                [
-                  "Deletion failures",
-                  String(failed)
-                ]
+                ["Workflow", workflowName],
+                ["Workflow file", workflow.path || "—"],
+                ["API completed runs", String(runs.length)],
+                ["Previous completed runs found", String(previousRuns.length)],
+                ["Runs deleted", String(deleted)],
+                ["Deletion failures", String(failed)],
               ])
               .write();
 
+            if (failureDetails.length) {
+              await core.summary
+                .addHeading("Deletion failure details")
+                .addList(failureDetails)
+                .write();
+            }
+
+            core.info(`Cleanup done: deleted=${deleted} failed=${failed}`);
   prepare:
     name: "📦 Prepare complete test-data"
     needs: [cleanup-previous]
