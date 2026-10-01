@@ -3,10 +3,9 @@ const fs = require("fs");
 const path = require("path");
 const nodemailer = require("nodemailer");
 
-const LOGO_PATH = path.join(__dirname, "..", "test-data", "Datastore_Logo.png");
-const LOGO_CID = "datastore_logo_cid";
+const LOGO_PATH = path.join(__dirname, "..", "test-data", "Lizardtech_Logo.png");
+const LOGO_CID = "lizardtech_logo_cid";
 
-const TARGET_URL = process.env.TARGET_URL || "https://datastore.geowgs84.com/";
 const REPORT_TIMEZONE = process.env.REPORT_TIMEZONE || "Asia/Kolkata";
 
 const DIAG_DIR = path.join(process.cwd(), "diagnostics");
