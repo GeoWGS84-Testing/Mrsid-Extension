@@ -96,14 +96,14 @@ Client-side rejection tests (03-*) do **not**.
 
 ## GitHub Actions
 
-The workflow at `.github/workflows/playwright.yml` runs the `chromium-extension`
-project in eight shards. It downloads the four provided GeoTIFF fixtures on
-each run; the three large fixtures are downloaded only when
-`run_large_file_tests` is enabled. Large raster files are provisioned from
-Google Drive rather than committed to Git.
+The workflow at `.github/workflows/playwright.yml` runs the
+`chromium-extension` project in eight shards. It downloads the provided
+GeoTIFF fixtures from Google Drive; the three large fixtures are downloaded
+only when `run_large_file_tests` is enabled. Large raster files are not
+committed to Git.
 
-The tests also reference these MrSID fixtures, for which no Drive IDs were
-provided:
+These MrSID fixtures have no Drive IDs yet, so their dependent tests skip in a
+clean CI checkout until IDs are added:
 
 - `valid/01_NAIP_2014_WGS84.sid`
 - `valid/NAIP_2014_WGS84_EPSG4326.sid`
@@ -113,15 +113,9 @@ provided:
 - `boundary/tiny.sid`
 - `boundary/VALID_UPPER_MrSID_Extension.SID`
 
-Add any available Drive IDs as a JSON object in the repository variable
+Add available IDs as a JSON object in the repository variable
 `GEOVIEWER_EXTRA_FIXTURE_IDS`, keyed by paths relative to `test-data/`, for
-example `{"valid/01_NAIP_2014_WGS84.sid":"DRIVE_FILE_ID"}`. Tests that need
-fixtures not supplied by Git or this variable skip those cases.
-
-Upload and map tests require a reachable `https://api.geowgs84.com` backend;
-override it with the `BACKEND_URL` or `GEOVIEWER_BACKEND_URL` secret if needed.
-Optional email reports require `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, and at
-least one of `DAILY_REPORT_EMAILS` or `FAILURE_ALERT_EMAILS`.
+example `{"valid/01_NAIP_2014_WGS84.sid":"DRIVE_FILE_ID"}`.
 
 ## Primary flow steps (POM)
 
