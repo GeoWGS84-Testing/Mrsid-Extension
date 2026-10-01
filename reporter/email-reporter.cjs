@@ -3,8 +3,18 @@ const fs = require("fs");
 const path = require("path");
 const nodemailer = require("nodemailer");
 
-const LOGO_PATH = path.join(__dirname, "..", "test-data", "Lizardtech_Logo.png");
-const LOGO_CID = "lizardtech_logo_cid";
+function resolveLogoPath() {
+  const candidates = [
+    path.join(__dirname, "..", "extension", "logo.png"),
+    path.join(process.cwd(), "extension", "logo.png"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return candidates[0]; // keep original expected path for the warning message
+}
+const LOGO_PATH = resolveLogoPath();
+const LOGO_CID = "logo_cid";
 
 const REPORT_TIMEZONE = process.env.REPORT_TIMEZONE || "Asia/Kolkata";
 
@@ -573,7 +583,7 @@ function buildHeader(logoCid) {
     <table width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.navy};">
         <tr>
             <td align="center" style="padding:30px 20px 0 20px;" class="r-header-pad">
-                <img src="cid:${logoCid}" alt="Datastore" width="56" style="width:56px; height:auto; border:0; border-radius:10px; display:block;" />
+                <img src="cid:${logoCid}" alt="Lizardtech" width="56" style="width:56px; height:auto; border:0; border-radius:10px; display:block;" />
             </td>
         </tr>
         <tr>
@@ -584,7 +594,7 @@ function buildHeader(logoCid) {
         <tr>
             <td align="center" style="padding:6px 20px 0 20px;">
                 <h1 class="r-title" style="margin:0; font-family:'Segoe UI',Arial,sans-serif; font-size:20px; font-weight:700; color:#FFFFFF; letter-spacing:0.2px;">
-                    GeoWGS84 Datastore
+                    Mrsid Viewer Extension
                 </h1>
             </td>
         </tr>
@@ -760,7 +770,7 @@ function buildFooter() {
   return `
     <table width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.navy};">
         <tr><td style="height:1px; line-height:1px; font-size:1px; background:${BRAND.teal};">&nbsp;</td></tr>
-        <tr><td align="center" style="padding:18px 20px 4px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:11px; color:#E2E8F0; font-weight:600;">GeoWGS84 Datastore QA</td></tr>
+        <tr><td align="center" style="padding:18px 20px 4px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:11px; color:#E2E8F0; font-weight:600;">MrSID Viewer Extension QA</td></tr>
         <tr><td align="center" style="padding:0 20px 2px 20px;"><a href="${TARGET_URL}" style="font-family:'Segoe UI',Arial,sans-serif; font-size:9px; color:#93C5FD; text-decoration:none;">${TARGET_URL}</a></td></tr>
         <tr><td align="center" style="padding:6px 20px 4px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:9px; color:#8CA0B8; letter-spacing:1px;" class="r-footer">AUTOMATED E2E &nbsp;·&nbsp; PLAYWRIGHT &nbsp;·&nbsp; NODE.JS</td></tr>
         <tr><td align="center" style="padding:4px 20px 18px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:8px; color:#5E7391;" class="r-footer">This is an automated message — please do not reply.</td></tr>
@@ -999,6 +1009,7 @@ class EmailReporter {
   }
 
   async onEnd() {
+    const emailFailures = [];
     const allTests = [];
     for (const { test, result } of this.testRuns.values()) {
       const diag = readDiagnostics(test.testId, test.title);
@@ -1226,12 +1237,12 @@ class EmailReporter {
 
       const subject =
         this.stats.failed > 0
-          ? `[Datastore QA] ${this.stats.failed} Failed · ${this.stats.warning_tests} Warnings · ${this.stats.skipped_logic_tests} Skipped`
+          ? `[MrSID Viewer Extension QA] ${this.stats.failed} Failed · ${this.stats.warning_tests} Warnings · ${this.stats.skipped_logic_tests} Skipped`
           : this.stats.warning_tests > 0
-            ? `[Datastore QA] ${this.stats.warning_tests} Warnings · ${this.stats.skipped_logic_tests} Skipped`
+            ? `[MrSID Viewer Extension QA] ${this.stats.warning_tests} Warnings · ${this.stats.skipped_logic_tests} Skipped`
             : this.stats.skipped_logic_tests > 0 || this.stats.skipped > 0
-              ? `[Datastore QA] ${this.stats.skipped_logic_tests} Skipped Steps`
-              : `[Datastore QA] All ${this.stats.passed} Tests Passed`;
+              ? `[MrSID Viewer Extension QA] ${this.stats.skipped_logic_tests} Skipped Steps`
+              : `[MrSID Viewer Extension QA] All ${this.stats.passed} Tests Passed`;
 
       const html = wrapBody(`
                 ${buildHeader(LOGO_CID)}
@@ -1263,6 +1274,7 @@ class EmailReporter {
         console.log(`📧 Daily summary sent`);
       } catch (err) {
         console.error("❌ Failed daily summary:", err);
+        emailFailures.push({ type: "daily-summary", error: err.message || String(err) });
       }
     }
 
@@ -1301,7 +1313,7 @@ class EmailReporter {
         .map((item, idx) => buildTestRow(item, addAttachment, idx))
         .join("");
 
-      const subject = `[Datastore QA] Detailed Report — ${this.stats.passed} Passed, ${this.stats.failed} Failed, ${this.stats.warning_tests} Warnings, ${this.stats.skipped_logic_tests} Skipped`;
+      const subject = `[MrSID Viewer Extension QA] Detailed Report — ${this.stats.passed} Passed, ${this.stats.failed} Failed, ${this.stats.warning_tests} Warnings, ${this.stats.skipped_logic_tests} Skipped`;
 
       const html = wrapBody(`
                 ${buildHeader(LOGO_CID)}
@@ -1336,39 +1348,60 @@ class EmailReporter {
         );
       } catch (err) {
         console.error("❌ Failed detailed report:", err);
+        emailFailures.push({ type: "detailed-report", error: err.message || String(err) });
       }
+    }
+
+    if (emailFailures.length) {
+      console.error(`❌ Email reporter finished with ${emailFailures.length} delivery failure(s).`);
+      // Non-zero exit so CI can surface the failure in job status if desired.
+      process.exitCode = 1;
     }
   }
 
   async _sendMail(to, subject, text, html, attachments = []) {
-    if (!to?.trim()) throw new Error("No email recipients configured");
-    if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
-      throw new Error("SMTP_HOST, SMTP_USER, and SMTP_PASS are required");
+    // Defensive trim: GitHub Actions secrets frequently acquire trailing newlines
+    // when pasted in the UI. nodemailer then fails DNS with EBADNAME / hostname "host\n".
+    const smtpHost = (process.env.SMTP_HOST || "").trim();
+    const smtpPort = (process.env.SMTP_PORT || "587").trim();
+    const smtpUser = (process.env.SMTP_USER || "").trim();
+    const smtpPass = (process.env.SMTP_PASS || "").trim();
+    const smtpFrom = (process.env.SMTP_FROM || "").trim() || smtpUser;
+    const smtpSecure = (process.env.SMTP_SECURE || "").trim().toLowerCase() === "true";
+    const recipients = String(to || "")
+      .split(/[,;]+/)
+      .map((addr) => addr.trim())
+      .filter(Boolean)
+      .join(", ");
+
+    if (!recipients) throw new Error("No email recipients configured");
+    if (!smtpHost || !smtpUser || !smtpPass) {
+      throw new Error("SMTP_HOST, SMTP_USER, and SMTP_PASS are required (after trim)");
     }
 
     const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT || 587),
-      secure: process.env.SMTP_SECURE === "true" || false,
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      host: smtpHost,
+      port: Number(smtpPort) || 587,
+      secure: smtpSecure,
+      auth: { user: smtpUser, pass: smtpPass },
     });
 
     const finalAttachments = [...attachments];
 
     if (fs.existsSync(LOGO_PATH)) {
       finalAttachments.push({
-        filename: "Datastore_Logo.png",
+        filename: path.basename(LOGO_PATH),
         path: LOGO_PATH,
         cid: LOGO_CID,
         contentDisposition: "inline",
       });
     } else {
-      console.warn(`⚠️ Logo not found at ${LOGO_PATH}`);
+      console.warn(`⚠️ Logo not found at ${LOGO_PATH} (also checked extension/logo.png)`);
     }
 
     return transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to,
+      from: smtpFrom,
+      to: recipients,
       subject,
       text,
       html,
