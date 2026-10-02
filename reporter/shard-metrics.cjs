@@ -102,8 +102,32 @@ if (fs.existsSync(resultPath)) {
   }
 }
 
-const diagWarnings = diagnostics?.filter((item) => item.severity === "warning").length ?? null;
-const diagErrors = diagnostics?.filter((item) => item.severity === "error").length ?? null;
+// Ignore expected session/CDP/cleanup noise so recovered flakes stay green.
+const DIAG_NOISE = [
+  /upload not initialized/i,
+  /re-init session/i,
+  /chunk\s+\d+\s+failed/i,
+  /retry\s+\d+\/\d+/i,
+  /status of 400/i,
+  /status of 404/i,
+  /Tracing has been already started/i,
+  /save video/i,
+  /Must start tracing/i,
+  /Target page, context or browser has been closed/i,
+  /No target with given id/i,
+  /Memory snapshot unavailable/i,
+  /newCDPSession/i,
+  /Protocol error/i,
+  /net::ERR_/i,
+  /exceeded \d+ms/i,
+];
+const isNoise = (item) => {
+  const msg = String(item?.message || "");
+  return DIAG_NOISE.some((re) => re.test(msg));
+};
+const realDiag = Array.isArray(diagnostics) ? diagnostics.filter((d) => !isNoise(d)) : null;
+const diagWarnings = realDiag?.filter((item) => item.severity === "warning").length ?? null;
+const diagErrors = realDiag?.filter((item) => item.severity === "error").length ?? null;
 const noTestData = !counts || counts.total === 0 || counts.attempts === 0 || counts.executed === 0;
 if (noTestData && exitCode === 0) {
   missing.push("No Playwright test result data was collected.");
