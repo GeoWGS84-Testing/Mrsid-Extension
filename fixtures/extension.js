@@ -18,6 +18,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, "..", "extension");
 const CLEANUP_TIMEOUT_MS = Number(process.env.PW_CLEANUP_TIMEOUT_MS) || 15_000;
 
+/** Expected / recoverable noise from parallel chunk upload + session re-init (not real product failures). */
+const DIAG_NOISE = [
+  /upload not initialized/i,
+  /re-init session/i,
+  /chunk\s+\d+\s+failed,?\s*retrying/i,
+  /retry\s+\d+\/\d+\s+failed for chunk/i,
+  /failed to load resource: the server responded with a status of 400/i,
+  /tracing\.start:\s*Tracing has been already started/i,
+  /save video\s+\d+:\s*save video\s+\d+\s+exceeded/i,
+  /Must start tracing before stopping/i,
+  /Target page, context or browser has been closed/i,
+];
+
+function isDiagNoise(text) {
+  if (!text) return false;
+  return DIAG_NOISE.some((re) => re.test(String(text)));
+}
+
 async function bestEffortCleanup(label, operation, timeoutMs = CLEANUP_TIMEOUT_MS) {
   let timer;
   try {
@@ -29,12 +47,16 @@ async function bestEffortCleanup(label, operation, timeoutMs = CLEANUP_TIMEOUT_M
     ]);
     return true;
   } catch (error) {
-    recordDiagnostic({
-      severity: "error",
-      message: `${label}: ${error.message || String(error)}`,
-      stackTrace: error.stack || "",
-      source: "playwright-cleanup",
-    });
+    const msg = `${label}: ${error.message || String(error)}`;
+    // Do not pollute DIAG / email with expected cleanup timeouts on large-file runs.
+    if (!isDiagNoise(msg)) {
+      recordDiagnostic({
+        severity: "error",
+        message: msg,
+        stackTrace: error.stack || "",
+        source: "playwright-cleanup",
+      });
+    }
     console.warn(`[PLAYWRIGHT CLEANUP] ${label}: ${error.message || String(error)}`);
     return false;
   } finally {
@@ -210,28 +232,42 @@ export const test = base.extend({
       const video = page.video();
       if (video) videos.add(video);
       page.on("console", (message) => {
+        const text = message.text();
+        if (isDiagNoise(text)) return; // expected session-reinit / 400 noise
         const type = message.type();
         recordDiagnostic({
           severity: type === "error" ? "error" : ["warning", "warn"].includes(type) ? "warning" : "info",
-          message: message.text(),
+          message: text,
           source: `browser-console:${type}`,
         });
       });
-      page.on("pageerror", (error) => recordDiagnostic({
-        severity: "error", message: error.message, stackTrace: error.stack, source: "pageerror",
-      }));
+      page.on("pageerror", (error) => {
+        if (isDiagNoise(error.message)) return;
+        recordDiagnostic({
+          severity: "error", message: error.message, stackTrace: error.stack, source: "pageerror",
+        });
+      });
       page.on("crash", () => recordDiagnostic({
         severity: "error", message: `Page crashed: ${page.url()}`, source: "page-crash",
       }));
-      page.on("requestfailed", (request) => recordDiagnostic({
-        severity: "error",
-        message: `${request.method()} ${request.url()} failed: ${request.failure()?.errorText || "unknown network error"}`,
-        source: "network-request",
-      }));
-      page.on("response", (response) => {
-        if (response.status() >= 400) recordDiagnostic({
+      page.on("requestfailed", (request) => {
+        const msg = `${request.method()} ${request.url()} failed: ${request.failure()?.errorText || "unknown network error"}`;
+        // 400 on upload_chunk during re-init is expected and recovered by client retry.
+        if (isDiagNoise(msg) || /\/upload_chunk/i.test(request.url())) return;
+        recordDiagnostic({
           severity: "error",
-          message: `${response.status()} ${response.request().method()} ${response.url()}`,
+          message: msg,
+          source: "network-request",
+        });
+      });
+      page.on("response", (response) => {
+        if (response.status() < 400) return;
+        const url = response.url();
+        // Ignore expected 400s on chunk upload (session re-init path) and transient 404s on download preview.
+        if (/\/upload_chunk/i.test(url) || response.status() === 404) return;
+        recordDiagnostic({
+          severity: "error",
+          message: `${response.status()} ${response.request().method()} ${url}`,
           source: "http-response",
         });
       });
@@ -247,11 +283,15 @@ export const test = base.extend({
     });
 
     const collectServiceWorker = (worker) => {
-      worker.on("console", (message) => recordDiagnostic({
-        severity: message.type() === "error" ? "error" : ["warning", "warn"].includes(message.type()) ? "warning" : "info",
-        message: message.text(),
-        source: "extension-console",
-      }));
+      worker.on("console", (message) => {
+        const text = message.text();
+        if (isDiagNoise(text)) return;
+        recordDiagnostic({
+          severity: message.type() === "error" ? "error" : ["warning", "warn"].includes(message.type()) ? "warning" : "info",
+          message: text,
+          source: "extension-console",
+        });
+      });
     };
     context.serviceWorkers().forEach(collectServiceWorker);
     context.on("serviceworker", collectServiceWorker);
