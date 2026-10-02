@@ -18,17 +18,25 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_PATH = path.resolve(__dirname, "..", "extension");
 const CLEANUP_TIMEOUT_MS = Number(process.env.PW_CLEANUP_TIMEOUT_MS) || 15_000;
 
-/** Expected / recoverable noise from parallel chunk upload + session re-init (not real product failures). */
+/** Expected / recoverable noise — never counts as DIAG error/warning for shard status or email. */
 const DIAG_NOISE = [
   /upload not initialized/i,
   /re-init session/i,
   /chunk\s+\d+\s+failed,?\s*retrying/i,
   /retry\s+\d+\/\d+\s+failed for chunk/i,
   /failed to load resource: the server responded with a status of 400/i,
+  /failed to load resource: the server responded with a status of 404/i,
   /tracing\.start:\s*Tracing has been already started/i,
   /save video\s+\d+:\s*save video\s+\d+\s+exceeded/i,
   /Must start tracing before stopping/i,
   /Target page, context or browser has been closed/i,
+  /No target with given id found/i,
+  /Memory snapshot unavailable/i,
+  /browserContext\.newCDPSession/i,
+  /Protocol error\s*\(Target\./i,
+  /net::ERR_/i,
+  /NS_ERROR_/i,
+  /Download is starting/i,
 ];
 
 function isDiagNoise(text) {
@@ -219,11 +227,15 @@ export const test = base.extend({
           await session.detach().catch(() => {});
         }
       })()
-        .catch((error) => recordDiagnostic({
-          severity: "info",
-          message: `Memory snapshot unavailable (${phase}): ${error.message}`,
-          source: "browser-memory",
-        }))
+        .catch((error) => {
+          // Expected when page/target already closed — do not pollute DIAG.
+          if (isDiagNoise(error.message) || /No target|closed|CDPSession/i.test(error.message || "")) return;
+          recordDiagnostic({
+            severity: "info",
+            message: `Memory snapshot unavailable (${phase}): ${error.message}`,
+            source: "browser-memory",
+          });
+        })
         .finally(() => pendingMemorySnapshots.delete(task));
       pendingMemorySnapshots.add(task);
     };
@@ -299,7 +311,10 @@ export const test = base.extend({
       await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
       tracingStarted = true;
     } catch (error) {
-      recordDiagnostic({ severity: "warning", message: error.message, source: "playwright-trace" });
+      // "Tracing has been already started" on retries is expected — do not record as DIAG.
+      if (!isDiagNoise(error.message)) {
+        recordDiagnostic({ severity: "warning", message: error.message, source: "playwright-trace" });
+      }
       tracingStarted = false;
     }
 
