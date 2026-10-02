@@ -736,11 +736,30 @@ jobs:
           EMAIL_EXIT=${PIPESTATUS[0]}
           set -e
 
-          DAILY_SENT=$(grep -c "Daily summary sent" /tmp/email-reporter.log 2>/dev/null || true)
-          DETAIL_SENT=$(grep -c "Detailed report sent" /tmp/email-reporter.log 2>/dev/null || true)
-          MAIL_ACCEPTED=$(grep -c "Mail accepted:" /tmp/email-reporter.log 2>/dev/null || true)
+          DAILY_SENT=$(grep -c "Daily summary sent" /tmp/email-reporter.log 2>/dev/null || echo 0)
+          DETAIL_SENT=$(grep -c "Detailed report sent" /tmp/email-reporter.log 2>/dev/null || echo 0)
+          MAIL_ACCEPTED=$(grep -c "Mail accepted:" /tmp/email-reporter.log 2>/dev/null || echo 0)
           LOGO_LINE=$(grep "Logo attached from" /tmp/email-reporter.log 2>/dev/null | head -1 || true)
-          FAIL_LINES=$(grep -E "❌ Failed|Email reporter finished with" /tmp/email-reporter.log 2>/dev/null || true)
+          FAIL_LINES=$(grep -E "Failed daily|Failed detailed|Email reporter finished with" /tmp/email-reporter.log 2>/dev/null || true)
+
+          # Normalize counts (grep -c can print "0\n" with || echo)
+          DAILY_SENT=$(echo "$DAILY_SENT" | head -1 | tr -dc '0-9')
+          DETAIL_SENT=$(echo "$DETAIL_SENT" | head -1 | tr -dc '0-9')
+          MAIL_ACCEPTED=$(echo "$MAIL_ACCEPTED" | head -1 | tr -dc '0-9')
+          DAILY_SENT=${DAILY_SENT:-0}
+          DETAIL_SENT=${DETAIL_SENT:-0}
+          MAIL_ACCEPTED=${MAIL_ACCEPTED:-0}
+
+          if [[ "$DAILY_SENT" -gt 0 ]]; then
+            DAILY_LABEL="✅ sent (director summary)"
+          else
+            DAILY_LABEL="— not sent"
+          fi
+          if [[ "$DETAIL_SENT" -gt 0 ]]; then
+            DETAIL_LABEL="✅ sent (QA full report)"
+          else
+            DETAIL_LABEL="— not sent"
+          fi
 
           if [[ "$EMAIL_EXIT" -eq 0 ]]; then
             echo "status=sent" >> "$GITHUB_OUTPUT"
@@ -750,11 +769,11 @@ jobs:
               echo "| Item | Result |"
               echo "| ---- | ------ |"
               echo "| Exit code | \`${EMAIL_EXIT}\` |"
-              echo "| Daily summary | $([ \"$DAILY_SENT\" -gt 0 ] && echo '✅ sent' || echo '— not sent') |"
-              echo "| Detailed report | $([ \"$DETAIL_SENT\" -gt 0 ] && echo '✅ sent' || echo '— skipped (no failures/warnings)') |"
+              echo "| Daily summary | ${DAILY_LABEL} |"
+              echo "| Detailed report | ${DETAIL_LABEL} |"
               echo "| SMTP accepted | ${MAIL_ACCEPTED} message(s) |"
               if [[ -n "$LOGO_LINE" ]]; then
-                echo "| Logo | ${LOGO_LINE#*[REPORTER] } |"
+                echo "| Logo | ${LOGO_LINE} |"
               fi
               echo
               if [[ -n "$FAIL_LINES" ]]; then
