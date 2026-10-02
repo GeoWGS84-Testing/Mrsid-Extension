@@ -1,4 +1,3 @@
-
 require("dotenv/config");
 const fs = require("fs");
 const path = require("path");
@@ -1152,14 +1151,53 @@ class EmailReporter {
     for (const { test, result } of this.testRuns.values()) {
       const diag = readDiagnostics(test.testId, test.title);
 
+      // Prefer real step logs (test-step / terminal) over browser-memory snapshots
+      // so QA sees Step N / ✅ checks — same style as the reference project email.
       let rawLogs = "";
 
-      if (diag && diag.infos && diag.infos.length > 0) {
-        rawLogs = stripAnsi(formatInfosAsLogs(diag.infos, test.title));
-      } else {
-        const terminalOut = extractTerminalOutput(result);
-        if (terminalOut) {
-          rawLogs = filterTerminalLogsForTest(terminalOut, test.title);
+      const isUsefulInfo = (info) => {
+        const src = String(info?.meta?.source || info?.flow || "");
+        const msg = String(info?.message || "");
+        if (/browser-memory/i.test(src) || /browser-memory/i.test(msg)) return false;
+        if (/JSHeapUsedSize|phase":"page-open"|phase":"test-end"/i.test(msg)) return false;
+        return true;
+      };
+
+      if (diag && Array.isArray(diag.infos) && diag.infos.length > 0) {
+        const stepInfos = diag.infos.filter(isUsefulInfo);
+        if (stepInfos.length > 0) {
+          rawLogs = stripAnsi(formatInfosAsLogs(stepInfos, test.title));
+        }
+      }
+
+      const terminalOut = extractTerminalOutput(result);
+      if (terminalOut) {
+        const filtered = stripAnsi(
+          filterTerminalLogsForTest(terminalOut, test.title),
+        );
+        const terminalUseful = filtered
+          .split("\n")
+          .filter((line) => {
+            if (/browser-memory/i.test(line)) return false;
+            if (/JSHeapUsedSize|phase":"page-open"|phase":"test-end"/i.test(line))
+              return false;
+            return true;
+          })
+          .join("\n")
+          .trim();
+
+        if (terminalUseful) {
+          const terminalLines = terminalUseful.split("\n").filter((l) => l.trim());
+          const diagLines = rawLogs ? rawLogs.split("\n").filter((l) => l.trim()) : [];
+          if (terminalLines.length >= diagLines.length) {
+            rawLogs = terminalUseful;
+          } else if (diagLines.length > 0) {
+            const seen = new Set(diagLines.map((l) => l.trim()));
+            const extra = terminalLines.filter((l) => !seen.has(l.trim()));
+            if (extra.length) rawLogs = rawLogs + "\n" + extra.join("\n");
+          } else {
+            rawLogs = terminalUseful;
+          }
         }
       }
 
@@ -1169,8 +1207,17 @@ class EmailReporter {
         diag.browserConsole.length > 0 &&
         (diag.errors?.length > 0 || diag.warnings?.length > 0)
       ) {
-        const browserLogs = stripAnsi(diag.browserConsole.join("\n"));
-        if (browserLogs) {
+        const browserLogs = stripAnsi(
+          diag.browserConsole
+            .filter((line) => {
+              if (/browser-memory/i.test(line)) return false;
+              if (/upload not initialized|status of 400|status of 404/i.test(line))
+                return false;
+              return true;
+            })
+            .join("\n"),
+        );
+        if (browserLogs.trim()) {
           rawLogs = rawLogs
             ? rawLogs + "\n\n[BROWSER CONSOLE]\n" + browserLogs
             : "[BROWSER CONSOLE]\n" + browserLogs;
