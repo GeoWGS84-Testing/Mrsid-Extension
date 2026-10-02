@@ -819,16 +819,18 @@ function buildTimeBar(time, wallClock, totalDuration, totalTests, workers) {
 }
 
 function buildStatsBar(stats, totalTests) {
-  const pPct =
-    totalTests > 0 ? Math.round((stats.passed / totalTests) * 100) : 0;
-  const fPct =
-    totalTests > 0 ? Math.round((stats.failed / totalTests) * 100) : 0;
-  const wPct =
-    totalTests > 0 ? Math.round((stats.warning_tests / totalTests) * 100) : 0;
-  const sPct =
-    totalTests > 0 ? Math.round((stats.skipped / totalTests) * 100) : 0;
+  // Director summary: Passed | Passed with Warning | Failed | Skipped
+  const cleanPassed = stats.passed || 0;
+  const passWarn = stats.passed_with_warning || 0;
+  const failed = stats.failed || 0;
+  const skipped = (stats.skipped || 0) + (stats.skipped_logic_tests || 0);
 
-  function statCard(dot, num, label, pct, color, bgColor, borderColor, active) {
+  const pPct = totalTests > 0 ? Math.round((cleanPassed / totalTests) * 100) : 0;
+  const pwPct = totalTests > 0 ? Math.round((passWarn / totalTests) * 100) : 0;
+  const fPct = totalTests > 0 ? Math.round((failed / totalTests) * 100) : 0;
+  const sPct = totalTests > 0 ? Math.round((skipped / totalTests) * 100) : 0;
+
+  function statCard(num, label, pct, color, bgColor, borderColor, active) {
     const dc = BRAND.faint;
     const dbg = BRAND.neutralBg;
     const dbc = BRAND.line;
@@ -840,7 +842,7 @@ function buildStatsBar(stats, totalTests) {
             <table width="100%" cellpadding="0" cellspacing="0" style="background:${bg}; border:1px solid ${bc}; border-radius:10px; overflow:hidden;">
                 <tr><td align="center" style="padding-top:14px; padding-bottom:4px;"><div style="width:8px; height:8px; border-radius:50%; background:${c}; margin:0 auto; display:inline-block;" class="r-stat-emoji"></div></td></tr>
                 <tr><td align="center" style="padding-bottom:1px;"><div class="r-stat-num" style="display:inline-block; font-family:'Segoe UI',Arial,sans-serif; font-size:24px; font-weight:800; color:${c}; line-height:1.2;">${num}</div></td></tr>
-                <tr><td align="center" style="padding-bottom:1px;"><span style="font-family:'Segoe UI',Arial,sans-serif; font-size:9px; color:${c}; text-transform:uppercase; letter-spacing:1.2px; font-weight:700;" class="r-stat-lbl">${label}</span></td></tr>
+                <tr><td align="center" style="padding-bottom:1px;"><span style="font-family:'Segoe UI',Arial,sans-serif; font-size:8px; color:${c}; text-transform:uppercase; letter-spacing:0.8px; font-weight:700;" class="r-stat-lbl">${label}</span></td></tr>
                 <tr><td align="center" style="padding-bottom:12px;" class="r-stat-pad"><span style="font-family:'Segoe UI',Arial,sans-serif; font-size:11px; color:${c}; font-weight:600;" class="r-stat-pct">${pct}%</span></td></tr>
             </table>
         </td>`;
@@ -849,10 +851,10 @@ function buildStatsBar(stats, totalTests) {
   const bars = [];
   if (pPct > 0)
     bars.push(`<div style="height:100%; width:${pPct}%; background:${BRAND.success}; float:left;"></div>`);
+  if (pwPct > 0)
+    bars.push(`<div style="height:100%; width:${pwPct}%; background:${BRAND.warning}; float:left;"></div>`);
   if (fPct > 0)
     bars.push(`<div style="height:100%; width:${fPct}%; background:${BRAND.danger}; float:left;"></div>`);
-  if (wPct > 0)
-    bars.push(`<div style="height:100%; width:${wPct}%; background:${BRAND.warning}; float:left;"></div>`);
   if (sPct > 0)
     bars.push(`<div style="height:100%; width:${sPct}%; background:${BRAND.neutral}; float:left;"></div>`);
 
@@ -860,10 +862,10 @@ function buildStatsBar(stats, totalTests) {
     <table width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.card}; border-bottom:1px solid ${BRAND.line};">
         <tr><td style="padding:18px 16px 8px 16px;" class="resp-pad-sm">
             <table width="100%" cellpadding="0" cellspacing="0"><tr>
-                ${statCard(1, stats.passed, "Passed", pPct, BRAND.success, BRAND.successBg, BRAND.successLine, stats.passed > 0)}
-                ${statCard(1, stats.failed, "Failed", fPct, BRAND.danger, BRAND.dangerBg, BRAND.dangerLine, stats.failed > 0)}
-                ${statCard(1, stats.warning_tests, "Warnings", wPct, BRAND.warning, BRAND.warningBg, BRAND.warningLine, stats.warning_tests > 0)}
-                ${statCard(1, stats.skipped, "Skipped", sPct, BRAND.neutral, BRAND.neutralBg, BRAND.neutralLine, stats.skipped > 0)}
+                ${statCard(cleanPassed, "Passed", pPct, BRAND.success, BRAND.successBg, BRAND.successLine, cleanPassed > 0)}
+                ${statCard(passWarn, "Pass + Warn", pwPct, BRAND.warning, BRAND.warningBg, BRAND.warningLine, passWarn > 0)}
+                ${statCard(failed, "Failed", fPct, BRAND.danger, BRAND.dangerBg, BRAND.dangerLine, failed > 0)}
+                ${statCard(skipped, "Skipped", sPct, BRAND.neutral, BRAND.neutralBg, BRAND.neutralLine, skipped > 0)}
             </tr></table>
         </td></tr>
         <tr><td style="padding:4px 20px 18px 20px;" class="resp-pad-sm">
@@ -873,7 +875,7 @@ function buildStatsBar(stats, totalTests) {
             <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:6px;">
                 <tr>
                     <td style="font-family:'Segoe UI',Arial,sans-serif; font-size:8px; color:${BRAND.faint};" class="r-legend">
-                        <span style="color:${BRAND.success};">■</span> Pass &nbsp; <span style="color:${BRAND.danger};">■</span> Fail &nbsp; <span style="color:${BRAND.warning};">■</span> Warn &nbsp; <span style="color:${BRAND.neutral};">■</span> Skip
+                        <span style="color:${BRAND.success};">■</span> Pass &nbsp; <span style="color:${BRAND.warning};">■</span> Pass+Warn &nbsp; <span style="color:${BRAND.danger};">■</span> Fail &nbsp; <span style="color:${BRAND.neutral};">■</span> Skip
                     </td>
                     <td align="right" style="font-family:'Segoe UI',Arial,sans-serif; font-size:8px; color:${BRAND.faint};" class="r-legend">${totalTests} total</td>
                 </tr>
@@ -939,29 +941,34 @@ function buildTestRow(item, addAttachment, index) {
     duration,
   } = item;
 
-  // Final Playwright status wins for the badge. A retry-recovered test is PASSED
-  // even if the first attempt left warnings/noise in diagnostics.
+  // Priority: FAILED → SKIPPED → PASSED WITH WARNING → PASSED
+  // Retry recovery stays PASSED* (director still counts as Passed).
   let bgCard, borderColor, color, label;
   if (isFailure) {
     bgCard = BRAND.dangerBg;
     borderColor = BRAND.dangerLine;
     color = BRAND.danger;
     label = "FAILED";
-  } else if (isPassedFinal || isPassed) {
-    bgCard = BRAND.successBg;
-    borderColor = BRAND.successLine;
-    color = BRAND.success;
-    label = hadRetry ? "PASSED*" : "PASSED"; // * = recovered on retry
-  } else if (hasWarning) {
-    bgCard = BRAND.warningBg;
-    borderColor = BRAND.warningLine;
-    color = BRAND.warning;
-    label = "WARNING";
-  } else if (hasSkippedLogic) {
+  } else if (hasSkippedLogic || item.isTestSkipped) {
     bgCard = BRAND.skipBg;
     borderColor = BRAND.skipLine;
     color = BRAND.skip;
     label = "SKIPPED";
+  } else if ((isPassedFinal || isPassed) && hasWarning) {
+    bgCard = BRAND.warningBg;
+    borderColor = BRAND.warningLine;
+    color = BRAND.warning;
+    label = hadRetry ? "PASS* WARN" : "PASS + WARN";
+  } else if (isPassedFinal || isPassed) {
+    bgCard = BRAND.successBg;
+    borderColor = BRAND.successLine;
+    color = BRAND.success;
+    label = hadRetry ? "PASSED*" : "PASSED";
+  } else if (hasWarning) {
+    bgCard = BRAND.warningBg;
+    borderColor = BRAND.warningLine;
+    color = BRAND.warning;
+    label = "PASS + WARN";
   } else {
     bgCard = BRAND.successBg;
     borderColor = BRAND.successLine;
@@ -971,13 +978,11 @@ function buildTestRow(item, addAttachment, index) {
 
   const rowBg = isFailure
     ? "#FFFBFB"
-    : isPassedFinal || isPassed
-      ? "#FFFFFF"
+    : hasSkippedLogic || item.isTestSkipped
+      ? "#FBFAFF"
       : hasWarning
         ? "#FFFDF7"
-        : hasSkippedLogic
-          ? "#FBFAFF"
-          : "#FFFFFF";
+        : "#FFFFFF";
 
   const attHtml = [];
   const hasMedia =
@@ -1127,10 +1132,10 @@ class EmailReporter {
   constructor() {
     this.testRuns = new Map();
     this.stats = {
-      passed: 0,
+      passed: 0,                 // clean pass (incl. retry→pass, no real warnings)
+      passed_with_warning: 0,    // Playwright passed + real product warnings
       failed: 0,
       skipped: 0,
-      warning_tests: 0,
       skipped_logic_tests: 0,
     };
     this.workers = 1;
@@ -1303,15 +1308,15 @@ class EmailReporter {
         }
       }
 
-      // Final Playwright status for executive counts (daily email / director):
-      // a test that fails once then passes on retry counts as PASSED only.
+      // Final status priority: FAILED → SKIPPED → PASSED WITH WARNING → PASSED
+      // Retry recovered (fail then pass) counts as PASSED for director; hadRetry for QA only.
       const isFailure =
         result.status === "failed" || result.status === "timedOut";
       const isTestSkipped = result.status === "skipped";
       const isPassedFinal = result.status === "passed";
       const hadRetry = (result.retry || 0) > 0;
 
-      // Strip expected upload/session/CDP noise — these are not product warnings.
+      // Infrastructure / tooling noise — never becomes product warnings.
       const NOISE_WARN = [
         /upload not initialized/i,
         /re-init session/i,
@@ -1328,13 +1333,14 @@ class EmailReporter {
         /newCDPSession/i,
         /Protocol error/i,
         /net::ERR_/i,
+        /browser-memory/i,
+        /JSHeapUsedSize/i,
       ];
       const realWarnings = (allWarnings || []).filter(
         (w) => !NOISE_WARN.some((re) => re.test(String(w))),
       );
       allWarnings = realWarnings;
 
-      // Detailed (QA) view: surface real warnings even when final status is passed.
       const hasWarning = realWarnings.length > 0;
       const hasSkippedLogic = allSkippedSteps.length > 0;
 
@@ -1342,13 +1348,21 @@ class EmailReporter {
         `[REPORTER] ${test.title}: status=${result.status} retry=${result.retry || 0} failure=${isFailure} hasWarning=${hasWarning}(${realWarnings.length}) hasSkippedLogic=${hasSkippedLogic}(${allSkippedSteps.length}) diag=${diag ? "found" : "NULL"}`,
       );
 
-      // Daily / director counts — final outcome only.
-      if (isFailure) this.stats.failed++;
-      else if (isTestSkipped) this.stats.skipped++;
-      else if (isPassedFinal) this.stats.passed++;
-      else if (hasWarning) this.stats.warning_tests++;
-      else if (hasSkippedLogic) this.stats.skipped_logic_tests++;
-      else this.stats.skipped++;
+      // Director counts — mutually exclusive buckets.
+      if (isFailure) {
+        this.stats.failed++;
+      } else if (isTestSkipped || hasSkippedLogic) {
+        if (isTestSkipped) this.stats.skipped++;
+        else this.stats.skipped_logic_tests++;
+      } else if (isPassedFinal && hasWarning) {
+        this.stats.passed_with_warning++;
+      } else if (isPassedFinal) {
+        this.stats.passed++; // includes retry→pass (hadRetry internal only)
+      } else if (hasWarning) {
+        this.stats.passed_with_warning++;
+      } else {
+        this.stats.skipped++;
+      }
 
       // Rebuild structured log with final status + real warnings.
       logs = truncateText(
@@ -1368,13 +1382,12 @@ class EmailReporter {
         : 0;
 
       const rawAttachments = result.attachments || [];
-      // QA detailed email: attach SS/video on fail, real warning, skip, or retry.
+      // SS/video: FAIL + retry recovery + skip logic only.
+      // PASSED WITH WARNING → logs only (no video by default).
       const shouldAttach =
         isFailure ||
-        hasWarning ||
-        hasSkippedLogic ||
-        isTestSkipped ||
-        hadRetry;
+        hadRetry ||
+        hasSkippedLogic;
 
       let images = rawAttachments.filter(
         (a) => a.path && /\.(png|jpg|jpeg|gif|webp)$/i.test(a.path),
@@ -1455,8 +1468,8 @@ class EmailReporter {
     const time = formatCompletionTime(completionDate);
     const totalTests =
       this.stats.passed +
+      this.stats.passed_with_warning +
       this.stats.failed +
-      this.stats.warning_tests +
       this.stats.skipped_logic_tests +
       this.stats.skipped;
 
@@ -1484,18 +1497,20 @@ class EmailReporter {
     // EMAIL 1: Daily Summary
     // ============================================================
     if (process.env.DAILY_REPORT_EMAILS?.trim()) {
+      const skippedTotal =
+        (this.stats.skipped || 0) + (this.stats.skipped_logic_tests || 0);
       let summaryLabel, summaryColor, summaryBg, summaryLine;
       if (this.stats.failed > 0) {
         summaryLabel = "Failures Detected";
         summaryColor = BRAND.danger;
         summaryBg = BRAND.dangerBg;
         summaryLine = BRAND.dangerLine;
-      } else if (this.stats.warning_tests > 0) {
-        summaryLabel = "Warnings Found";
+      } else if (this.stats.passed_with_warning > 0) {
+        summaryLabel = "Passed With Warnings";
         summaryColor = BRAND.warning;
         summaryBg = BRAND.warningBg;
         summaryLine = BRAND.warningLine;
-      } else if (this.stats.skipped_logic_tests > 0 || this.stats.skipped > 0) {
+      } else if (skippedTotal > 0) {
         summaryLabel = "Skipped Steps Found";
         summaryColor = BRAND.skip;
         summaryBg = BRAND.skipBg;
@@ -1509,11 +1524,11 @@ class EmailReporter {
 
       const subject =
         this.stats.failed > 0
-          ? `[${PROJECT_NAME} QA] ${this.stats.failed} Failed · ${this.stats.warning_tests} Warnings · ${this.stats.skipped_logic_tests} Skipped`
-          : this.stats.warning_tests > 0
-            ? `[${PROJECT_NAME} QA] ${this.stats.warning_tests} Warnings · ${this.stats.skipped_logic_tests} Skipped`
-            : this.stats.skipped_logic_tests > 0 || this.stats.skipped > 0
-              ? `[${PROJECT_NAME} QA] ${this.stats.skipped_logic_tests} Skipped Steps`
+          ? `[${PROJECT_NAME} QA] ${this.stats.failed} Failed · ${this.stats.passed_with_warning} Pass+Warn · ${skippedTotal} Skipped`
+          : this.stats.passed_with_warning > 0
+            ? `[${PROJECT_NAME} QA] ${this.stats.passed_with_warning} Passed with Warning · ${this.stats.passed} Passed`
+            : skippedTotal > 0
+              ? `[${PROJECT_NAME} QA] ${skippedTotal} Skipped · ${this.stats.passed} Passed`
               : `[${PROJECT_NAME} QA] All ${this.stats.passed} Tests Passed`;
 
       const html = wrapBody(`
@@ -1526,7 +1541,7 @@ class EmailReporter {
                             <tr><td align="center" style="padding:16px 16px; font-family:'Segoe UI',Arial,sans-serif;">
                                 <div style="font-size:12px; font-weight:800; color:${summaryColor}; letter-spacing:1.5px; text-transform:uppercase;">${summaryLabel}</div>
                                 <div style="font-size:9px; color:${BRAND.muted}; margin-top:6px;">
-                                    ${this.stats.passed} passed &nbsp;·&nbsp; ${this.stats.failed} failed &nbsp;·&nbsp; ${this.stats.warning_tests} warnings &nbsp;·&nbsp; ${this.stats.skipped_logic_tests} skipped logic &nbsp;·&nbsp; ${this.stats.skipped} skipped
+                                    ${this.stats.passed} passed &nbsp;·&nbsp; ${this.stats.passed_with_warning} passed with warning &nbsp;·&nbsp; ${this.stats.failed} failed &nbsp;·&nbsp; ${skippedTotal} skipped
                                 </div>
                             </td></tr>
                         </table>
@@ -1586,7 +1601,7 @@ class EmailReporter {
         .map((item, idx) => buildTestRow(item, addAttachment, idx))
         .join("");
 
-      const subject = `[${PROJECT_NAME} QA] Detailed Report — ${this.stats.passed} Passed, ${this.stats.failed} Failed, ${this.stats.warning_tests} Warnings, ${this.stats.skipped_logic_tests} Skipped`;
+      const subject = `[${PROJECT_NAME} QA] Detailed Report — ${this.stats.passed} Passed, ${this.stats.passed_with_warning} Pass+Warn, ${this.stats.failed} Failed, ${(this.stats.skipped || 0) + (this.stats.skipped_logic_tests || 0)} Skipped`;
 
       const html = wrapBody(`
                 ${buildHeader(LOGO_CID)}
@@ -1599,7 +1614,7 @@ class EmailReporter {
                 </table>
                 <table width="100%" cellpadding="0" cellspacing="0">
                     <tr><td align="center" style="padding:2px 20px 6px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:8px; color:${BRAND.faint};" class="r-footer">
-                        ${(totalSize / (1024 * 1024)).toFixed(2)} MB attached &nbsp;·&nbsp; Clean passes: logs only &nbsp;·&nbsp; Failed / Warning / Retry rows include screenshots and video when available
+                        ${(totalSize / (1024 * 1024)).toFixed(2)} MB attached &nbsp;·&nbsp; Clean / Pass+Warn: logs only &nbsp;·&nbsp; Failed / Retry rows include screenshots and video when available
                     </td></tr>
                 </table>
                 ${buildFooter()}
