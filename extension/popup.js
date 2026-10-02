@@ -414,15 +414,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     async function performParallelUpload(file) {
-        // Slightly larger chunks + lower concurrency = fewer requests and more stable sessions on CI.
+        // Larger chunks + low concurrency keeps the backend session stable (avoids "Upload not initialized").
+        // CI runners share the same API; parallel chunk races were the main source of flaky 400s.
         const CHUNK_SIZE = 32 * 1024 * 1024; // 32MB
-        const CONCURRENCY_PER_ORIGIN = 3;
+        const CONCURRENCY_PER_ORIGIN = 2;
 
         let HOSTS = [backendUrl];
-        if (backendUrl.includes("127.0.0.1")) {
-            HOSTS.push(backendUrl.replace("127.0.0.1", "localhost"));
-        } else if (backendUrl.includes("localhost")) {
-            HOSTS.push(backendUrl.replace("localhost", "127.0.0.1"));
+        // Prefer a single host in CI to avoid cross-origin session splits.
+        // Local dual-host is still useful for multi-origin testing.
+        if (!/api\.geowgs84\.com/i.test(backendUrl)) {
+            if (backendUrl.includes("127.0.0.1")) {
+                HOSTS.push(backendUrl.replace("127.0.0.1", "localhost"));
+            } else if (backendUrl.includes("localhost")) {
+                HOSTS.push(backendUrl.replace("localhost", "127.0.0.1"));
+            }
         }
 
         const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -440,6 +445,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             if (!initRes.ok || initData.error) {
                 throw new Error(initData.error || `init_upload failed HTTP ${initRes.status}`);
             }
+            // Brief settle so the backend registers the session before the first chunk race.
+            await new Promise((r) => setTimeout(r, 150));
             return initData;
         }
 
