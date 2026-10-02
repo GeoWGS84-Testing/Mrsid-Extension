@@ -1,4 +1,3 @@
-
 require("dotenv/config");
 const fs = require("fs");
 const path = require("path");
@@ -1043,7 +1042,9 @@ class EmailReporter {
         }
       }
 
-      const logs = truncateText(stripAnsi(rawLogs), 300);
+      // Keep generous per-test logs so the email is readable start→finish.
+      // (Previous 300-line cap hid most of the flow on multi-step GIS tests.)
+      const logs = truncateText(stripAnsi(rawLogs), 800);
       const logLineCount = logs
         ? logs.split("\n").filter((l) => l.trim()).length
         : 0;
@@ -1284,8 +1285,14 @@ class EmailReporter {
 
     // ============================================================
     // EMAIL 2: Detailed Report with attachments
+    // Only when there is something actionable (failures / warnings),
+    // so a fully-green run does not send two nearly-identical mails.
     // ============================================================
-    if (process.env.FAILURE_ALERT_EMAILS?.trim()) {
+    const needsDetailed =
+      this.stats.failed > 0 ||
+      this.stats.warning_tests > 0 ||
+      this.stats.skipped_logic_tests > 0;
+    if (process.env.FAILURE_ALERT_EMAILS?.trim() && needsDetailed) {
       const finalAttachments = [];
       let totalSize = 0;
       const MAX_SIZE = 20 * 1024 * 1024;
