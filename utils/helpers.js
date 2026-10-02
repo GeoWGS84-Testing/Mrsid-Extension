@@ -124,6 +124,16 @@ export function logInfo(message, meta = {}) {
     meta,
   };
   INFOS.push(entry);
+  // Persist into shard diagnostics so the email reporter shows real step logs
+  // (Step N, ✅ checks, etc.) — not only browser-memory snapshots.
+  recordDiagnostic({
+    severity: "info",
+    message: CURRENT_FLOW
+      ? `[${CURRENT_FLOW}] ${message}`
+      : String(message || ""),
+    stackTrace: meta && Object.keys(meta).length ? JSON.stringify(meta) : "",
+    source: "test-step",
+  });
   const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : "";
   console.log(`[INFO] ${entry.time} ${contextPrefix()} - ${message}${metaStr}`);
 }
