@@ -302,25 +302,110 @@ function findVideoForTest(testTitle) {
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
     .substring(0, 80);
+  const needle = safeName.substring(0, 40).toLowerCase();
 
   try {
-    const files = fs.readdirSync(VIDEO_DIR);
-    const videoFiles = files.filter(
-      (f) =>
-        /\.(webm|mp4|mkv)$/i.test(f) && f.includes(safeName.substring(0, 40)),
-    );
-    if (videoFiles.length > 0) {
-      const sorted = videoFiles
-        .map((f) => ({
-          file: f,
-          mtime: fs.statSync(path.join(VIDEO_DIR, f)).mtimeMs,
-        }))
-        .sort((a, b) => b.mtime - a.mtime);
-      return path.join(VIDEO_DIR, sorted[0].file);
+    const hits = [];
+    const walk = (dir, depth = 0) => {
+      if (depth > 4) return;
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const ent of entries) {
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          walk(full, depth + 1);
+        } else if (/\.(webm|mp4|mkv)$/i.test(ent.name)) {
+          if (
+            full.toLowerCase().includes(needle) ||
+            ent.name.toLowerCase().includes(needle)
+          ) {
+            hits.push(full);
+          }
+        }
+      }
+    };
+    walk(VIDEO_DIR);
+    if (hits.length > 0) {
+      hits.sort(
+        (a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs,
+      );
+      return hits[0];
     }
   } catch (e) {}
 
   return null;
+}
+
+/** Find failure / diagnostic screenshots under test-results for a given test title. */
+/**
+ * Find screenshots for a test under test-results/.
+ * Playwright stores them in folders named from the spec + title; retries leave
+ * test-failed-*.png and failure-diagnostic*.png even when the final attempt passed.
+ */
+function findScreenshotsForTest(testTitle, testFileBase) {
+  if (!fs.existsSync(VIDEO_DIR)) return [];
+
+  const titleSlug = String(testTitle)
+    .replace(/[:/\\<>?"|*]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .toLowerCase();
+  const tokens = titleSlug
+    .split("-")
+    .filter((t) => t.length >= 4 && !/^(gv|tc|the|with|from|onto|after|only)$/i.test(t))
+    .slice(0, 6);
+  const fileToken = testFileBase
+    ? String(testFileBase).replace(/\.spec\.js$/i, "").toLowerCase()
+    : "";
+  const hits = [];
+
+  try {
+    const walk = (dir, depth = 0) => {
+      if (depth > 5) return;
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const ent of entries) {
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          walk(full, depth + 1);
+          continue;
+        }
+        if (!/\.(png|jpg|jpeg|webp)$/i.test(ent.name)) continue;
+        const lowerPath = full.toLowerCase().replace(/\\/g, "/");
+        const lowerName = ent.name.toLowerCase();
+        const pathMatchesTitle =
+          tokens.length > 0 && tokens.some((t) => lowerPath.includes(t));
+        const pathMatchesFile = fileToken && lowerPath.includes(fileToken);
+        const looksLikeFailureShot =
+          /test-failed|failure-diagnostic|error|processing-product-error|screenshot/i.test(
+            lowerName,
+          );
+        if ((pathMatchesTitle || pathMatchesFile) && looksLikeFailureShot) {
+          hits.push(full);
+        }
+      }
+    };
+    walk(VIDEO_DIR);
+    hits.sort((a, b) => {
+      const score = (p) =>
+        (/failure-diagnostic/i.test(p) ? 2 : 0) +
+        (/test-failed/i.test(p) ? 1 : 0);
+      const d = score(b) - score(a);
+      if (d !== 0) return d;
+      return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs;
+    });
+    return hits.slice(0, 8);
+  } catch (e) {
+    return [];
+  }
 }
 
 // ============================================================
@@ -454,7 +539,7 @@ function readDiagnostics(testId, testTitle) {
 
 function formatInfosAsLogs(infos, testTitle = null) {
   if (!infos || infos.length === 0) return "";
-  return infos
+  const lines = infos
     .filter((info) => {
       if (!testTitle || !info.test) return true;
       return info.test === testTitle;
@@ -467,8 +552,43 @@ function formatInfosAsLogs(infos, testTitle = null) {
       const testPart = info.test ? `(${info.test})` : "";
       const flowPart = info.flow ? `[${info.flow}]` : "";
       return `[INFO] ${info.time} ${testPart} ${flowPart} - ${info.message}${meta}`;
-    })
-    .join("\n");
+    });
+  return lines.join("\n");
+}
+
+/**
+ * Build a clear start→finish log block for one testcase so the email is easy to scan.
+ */
+function buildStructuredTestLog({ title, status, retry, durationMs, rawLogs, errorDetails, warnings }) {
+  const statusUpper = String(status || "unknown").toUpperCase();
+  const retryNote = retry > 0 ? ` (recovered on retry #${retry})` : "";
+  const dur =
+    typeof durationMs === "number" && durationMs > 0
+      ? `${(durationMs / 1000).toFixed(1)}s`
+      : "n/a";
+  const header = [
+    `========== TESTCASE STARTED ==========`,
+    `Title : ${title}`,
+    `Status: ${statusUpper}${retryNote}`,
+    `Duration: ${dur}`,
+    `======================================`,
+  ].join("\n");
+
+  const body = (rawLogs || "").trim();
+
+  const footerParts = [
+    `========== TESTCASE ENDED ============`,
+    `Result: ${statusUpper}${retryNote}`,
+  ];
+  if (warnings && warnings.length) {
+    footerParts.push(`Warnings (${warnings.length}): ${warnings.slice(0, 5).join(" | ")}`);
+  }
+  if (errorDetails) {
+    footerParts.push(`Error: ${String(errorDetails).split("\n")[0].slice(0, 200)}`);
+  }
+  footerParts.push(`======================================`);
+
+  return [header, body, footerParts.join("\n")].filter(Boolean).join("\n\n");
 }
 
 // ============================================================
@@ -814,15 +934,24 @@ function buildTestRow(item, addAttachment, index) {
     hasSkippedLogic,
     isFailure,
     isPassed,
+    isPassedFinal,
+    hadRetry,
     duration,
   } = item;
 
+  // Final Playwright status wins for the badge. A retry-recovered test is PASSED
+  // even if the first attempt left warnings/noise in diagnostics.
   let bgCard, borderColor, color, label;
   if (isFailure) {
     bgCard = BRAND.dangerBg;
     borderColor = BRAND.dangerLine;
     color = BRAND.danger;
     label = "FAILED";
+  } else if (isPassedFinal || isPassed) {
+    bgCard = BRAND.successBg;
+    borderColor = BRAND.successLine;
+    color = BRAND.success;
+    label = hadRetry ? "PASSED*" : "PASSED"; // * = recovered on retry
   } else if (hasWarning) {
     bgCard = BRAND.warningBg;
     borderColor = BRAND.warningLine;
@@ -842,19 +971,24 @@ function buildTestRow(item, addAttachment, index) {
 
   const rowBg = isFailure
     ? "#FFFBFB"
-    : hasWarning
-      ? "#FFFDF7"
-      : hasSkippedLogic
-        ? "#FBFAFF"
-        : "#FFFFFF";
+    : isPassedFinal || isPassed
+      ? "#FFFFFF"
+      : hasWarning
+        ? "#FFFDF7"
+        : hasSkippedLogic
+          ? "#FBFAFF"
+          : "#FFFFFF";
 
   const attHtml = [];
-  if (isPassed && !hasSkippedLogic) {
+  const hasMedia =
+    (images && images.length > 0) || (videos && videos.length > 0);
+  // Clean passes with no media → "none". Fail / warn / retry with media → attach.
+  if ((isPassedFinal || isPassed) && !hasMedia && !isFailure) {
     attHtml.push(
       `<span style="color:${BRAND.faint}; font-size:10px;">— none —</span>`,
     );
   } else {
-    images.forEach((img) => {
+    (images || []).forEach((img) => {
       if (addAttachment(img)) {
         const n =
           img.name.length > 18 ? img.name.substring(0, 16) + ".." : img.name;
@@ -863,7 +997,7 @@ function buildTestRow(item, addAttachment, index) {
         );
       }
     });
-    videos.forEach((vid) => {
+    (videos || []).forEach((vid) => {
       if (addAttachment(vid)) {
         const sz = (fs.statSync(vid.path).size / (1024 * 1024)).toFixed(1);
         attHtml.push(
@@ -1042,18 +1176,17 @@ class EmailReporter {
         }
       }
 
-      // Keep generous per-test logs so the email is readable start→finish.
-      // (Previous 300-line cap hid most of the flow on multi-step GIS tests.)
-      const logs = truncateText(stripAnsi(rawLogs), 800);
-      const logLineCount = logs
-        ? logs.split("\n").filter((l) => l.trim()).length
-        : 0;
-
       let errorDetails = null;
       if (result.error) {
         errorDetails = "Error: " + result.error.message;
         if (result.error.stack) errorDetails += "\n\n" + result.error.stack;
-      } else if (diag && diag.errors && diag.errors.length > 0) {
+      } else if (
+        result.status !== "passed" &&
+        diag &&
+        diag.errors &&
+        diag.errors.length > 0
+      ) {
+        // Only surface DIAG errors when the final status is not a clean pass.
         errorDetails = diag.errors
           .map((e) => {
             const meta = e.meta ? " " + JSON.stringify(e.meta) : "";
@@ -1062,6 +1195,22 @@ class EmailReporter {
           .join("\n");
       }
       if (errorDetails) errorDetails = stripAnsi(errorDetails);
+
+      // Structured start→finish block so each testcase is easy to read in the email.
+      const structured = buildStructuredTestLog({
+        title: test.title,
+        status: result.status,
+        retry: result.retry || 0,
+        durationMs: result.duration,
+        rawLogs: stripAnsi(rawLogs),
+        errorDetails,
+        warnings: [], // filled after realWarnings is computed; re-applied below
+      });
+      // Keep generous per-test logs (start banner + body + end banner).
+      let logs = truncateText(structured, 900);
+      const logLineCount = logs
+        ? logs.split("\n").filter((l) => l.trim()).length
+        : 0;
 
       let allWarnings = diag
         ? [...new Set(diag.warnings.map((w) => w.message))]
@@ -1106,59 +1255,126 @@ class EmailReporter {
         }
       }
 
+      // Final Playwright status for executive counts (daily email / director):
+      // a test that fails once then passes on retry counts as PASSED only.
       const isFailure =
         result.status === "failed" || result.status === "timedOut";
       const isTestSkipped = result.status === "skipped";
-      const hasWarning = allWarnings.length > 0;
+      const isPassedFinal = result.status === "passed";
+      const hadRetry = (result.retry || 0) > 0;
+
+      // Strip expected upload/session/CDP noise — these are not product warnings.
+      const NOISE_WARN = [
+        /upload not initialized/i,
+        /re-init session/i,
+        /chunk\s+\d+\s+failed/i,
+        /retry\s+\d+\/\d+/i,
+        /status of 400/i,
+        /status of 404/i,
+        /Tracing has been already started/i,
+        /save video/i,
+        /Must start tracing/i,
+        /Target page, context or browser has been closed/i,
+        /No target with given id/i,
+        /Memory snapshot unavailable/i,
+        /newCDPSession/i,
+        /Protocol error/i,
+        /net::ERR_/i,
+      ];
+      const realWarnings = (allWarnings || []).filter(
+        (w) => !NOISE_WARN.some((re) => re.test(String(w))),
+      );
+      allWarnings = realWarnings;
+
+      // Detailed (QA) view: surface real warnings even when final status is passed.
+      const hasWarning = realWarnings.length > 0;
       const hasSkippedLogic = allSkippedSteps.length > 0;
 
       console.log(
-        `[REPORTER] ${test.title}: failure=${isFailure} hasWarning=${hasWarning}(${allWarnings.length}) hasSkippedLogic=${hasSkippedLogic}(${allSkippedSteps.length}) diag=${diag ? "found" : "NULL"}`,
+        `[REPORTER] ${test.title}: status=${result.status} retry=${result.retry || 0} failure=${isFailure} hasWarning=${hasWarning}(${realWarnings.length}) hasSkippedLogic=${hasSkippedLogic}(${allSkippedSteps.length}) diag=${diag ? "found" : "NULL"}`,
       );
 
+      // Daily / director counts — final outcome only.
       if (isFailure) this.stats.failed++;
       else if (isTestSkipped) this.stats.skipped++;
+      else if (isPassedFinal) this.stats.passed++;
       else if (hasWarning) this.stats.warning_tests++;
       else if (hasSkippedLogic) this.stats.skipped_logic_tests++;
-      else if (result.status === "passed") this.stats.passed++;
       else this.stats.skipped++;
 
+      // Rebuild structured log with final status + real warnings.
+      logs = truncateText(
+        buildStructuredTestLog({
+          title: test.title,
+          status: result.status,
+          retry: result.retry || 0,
+          durationMs: result.duration,
+          rawLogs: stripAnsi(rawLogs),
+          errorDetails,
+          warnings: allWarnings,
+        }),
+        900,
+      );
+      const logLineCountFinal = logs
+        ? logs.split("\n").filter((l) => l.trim()).length
+        : 0;
+
       const rawAttachments = result.attachments || [];
+      // QA detailed email: attach SS/video on fail, real warning, skip, or retry.
       const shouldAttach =
-        isFailure || hasWarning || hasSkippedLogic || isTestSkipped;
-      let videos = [],
+        isFailure ||
+        hasWarning ||
+        hasSkippedLogic ||
+        isTestSkipped ||
+        hadRetry;
+
+      let images = rawAttachments.filter(
+        (a) => a.path && /\.(png|jpg|jpeg|gif|webp)$/i.test(a.path),
+      );
+      let videos = rawAttachments.filter(
+        (a) => a.path && /\.(webm|mp4|mkv)$/i.test(a.path),
+      );
+
+      if (!shouldAttach) {
         images = [];
-      if (shouldAttach) {
-        images = rawAttachments.filter(
-          (a) => a.path && /\.(png|jpg|jpeg|gif|webp)$/i.test(a.path),
-        );
-        videos = rawAttachments.filter(
-          (a) => a.path && /\.(webm|mp4|mkv)$/i.test(a.path),
-        );
-      }
-
-      if (
-        shouldAttach &&
-        videos.length === 0 &&
-        diag &&
-        diag.videoPath &&
-        fs.existsSync(diag.videoPath)
-      ) {
-        videos.push({
-          name: path.basename(diag.videoPath),
-          path: diag.videoPath,
-          contentType: "video/webm",
-        });
-      }
-
-      if (shouldAttach && videos.length === 0) {
-        const foundVideo = findVideoForTest(test.title);
-        if (foundVideo && fs.existsSync(foundVideo)) {
+        videos = [];
+      } else {
+        // Fallback: harvest media from test-results when not on result.attachments
+        // (common for warning-only rows and retry-recovered failures).
+        if (images.length === 0) {
+          const fileBase = test.location?.file
+            ? path.basename(test.location.file)
+            : "";
+          const foundShots = findScreenshotsForTest(test.title, fileBase);
+          for (const shot of foundShots) {
+            images.push({
+              name: path.basename(shot),
+              path: shot,
+              contentType: "image/png",
+            });
+          }
+        }
+        if (
+          videos.length === 0 &&
+          diag &&
+          diag.videoPath &&
+          fs.existsSync(diag.videoPath)
+        ) {
           videos.push({
-            name: path.basename(foundVideo),
-            path: foundVideo,
+            name: path.basename(diag.videoPath),
+            path: diag.videoPath,
             contentType: "video/webm",
           });
+        }
+        if (videos.length === 0) {
+          const foundVideo = findVideoForTest(test.title);
+          if (foundVideo && fs.existsSync(foundVideo)) {
+            videos.push({
+              name: path.basename(foundVideo),
+              path: foundVideo,
+              contentType: "video/webm",
+            });
+          }
         }
       }
 
@@ -1166,7 +1382,7 @@ class EmailReporter {
         test,
         result,
         logs,
-        logLineCount,
+        logLineCount: logLineCountFinal,
         errorDetails,
         allWarnings,
         allSkippedSteps,
@@ -1176,7 +1392,10 @@ class EmailReporter {
         hasSkippedLogic,
         isFailure,
         isTestSkipped,
-        isPassed: !isFailure && !hasWarning && !hasSkippedLogic,
+        isPassedFinal,
+        hadRetry,
+        // Director / badge: final Playwright status only.
+        isPassed: isPassedFinal,
         duration: result.duration || 0,
       });
     }
@@ -1284,18 +1503,13 @@ class EmailReporter {
     }
 
     // ============================================================
-    // EMAIL 2: Detailed Report with attachments
-    // Only when there is something actionable (failures / warnings),
-    // so a fully-green run does not send two nearly-identical mails.
+    // EMAIL 2: Detailed Report (QA / Dev) — always sent when configured
+    // Full per-testcase logs; screenshots + videos on fail / warning / retry
     // ============================================================
-    const needsDetailed =
-      this.stats.failed > 0 ||
-      this.stats.warning_tests > 0 ||
-      this.stats.skipped_logic_tests > 0;
-    if (process.env.FAILURE_ALERT_EMAILS?.trim() && needsDetailed) {
+    if (process.env.FAILURE_ALERT_EMAILS?.trim()) {
       const finalAttachments = [];
       let totalSize = 0;
-      const MAX_SIZE = 20 * 1024 * 1024;
+      const MAX_SIZE = 22 * 1024 * 1024;
 
       const addAttachment = (att) => {
         if (!att.path || !fs.existsSync(att.path)) return false;
@@ -1337,7 +1551,7 @@ class EmailReporter {
                 </table>
                 <table width="100%" cellpadding="0" cellspacing="0">
                     <tr><td align="center" style="padding:2px 20px 6px 20px; font-family:'Segoe UI',Arial,sans-serif; font-size:8px; color:${BRAND.faint};" class="r-footer">
-                        ${(totalSize / (1024 * 1024)).toFixed(2)} MB attached &nbsp;·&nbsp; Passed rows have no artifacts &nbsp;·&nbsp; Failed / Warning / Skipped rows include screenshots and video where available
+                        ${(totalSize / (1024 * 1024)).toFixed(2)} MB attached &nbsp;·&nbsp; Clean passes: logs only &nbsp;·&nbsp; Failed / Warning / Retry rows include screenshots and video when available
                     </td></tr>
                 </table>
                 ${buildFooter()}
