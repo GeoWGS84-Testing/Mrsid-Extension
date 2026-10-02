@@ -1382,26 +1382,39 @@ class EmailReporter {
         : 0;
 
       const rawAttachments = result.attachments || [];
-      // SS/video: FAIL + retry recovery + skip logic only.
-      // PASSED WITH WARNING → logs only (no video by default).
-      const shouldAttach =
-        isFailure ||
-        hadRetry ||
-        hasSkippedLogic;
+      // Media policy (agreed flow):
+      //   FAILED / retry-recovered → screenshots + video
+      //   PASSED WITH WARNING / clean PASSED / SKIPPED → no media
+      // Tiny/junk Playwright stubs (< 50 KB) are never attached.
+      const shouldAttachMedia = isFailure || hadRetry;
+      const MIN_VIDEO_BYTES = 50 * 1024;
 
-      let images = rawAttachments.filter(
-        (a) => a.path && /\.(png|jpg|jpeg|gif|webp)$/i.test(a.path),
-      );
-      let videos = rawAttachments.filter(
-        (a) => a.path && /\.(webm|mp4|mkv)$/i.test(a.path),
-      );
+      const isUsableVideo = (filePath) => {
+        try {
+          if (!filePath || !fs.existsSync(filePath)) return false;
+          const size = fs.statSync(filePath).size;
+          // 3KB "browser-video-*" stubs must not land in the email
+          return size >= MIN_VIDEO_BYTES;
+        } catch {
+          return false;
+        }
+      };
 
-      if (!shouldAttach) {
-        images = [];
-        videos = [];
-      } else {
-        // Fallback: harvest media from test-results when not on result.attachments
-        // (common for warning-only rows and retry-recovered failures).
+      let images = [];
+      let videos = [];
+
+      if (shouldAttachMedia) {
+        images = rawAttachments.filter(
+          (a) => a.path && /\.(png|jpg|jpeg|gif|webp)$/i.test(a.path) && fs.existsSync(a.path),
+        );
+        videos = rawAttachments.filter(
+          (a) =>
+            a.path &&
+            /\.(webm|mp4|mkv)$/i.test(a.path) &&
+            isUsableVideo(a.path),
+        );
+
+        // Fallback: harvest from test-results (failed / retry attempts)
         if (images.length === 0) {
           const fileBase = test.location?.file
             ? path.basename(test.location.file)
@@ -1419,7 +1432,7 @@ class EmailReporter {
           videos.length === 0 &&
           diag &&
           diag.videoPath &&
-          fs.existsSync(diag.videoPath)
+          isUsableVideo(diag.videoPath)
         ) {
           videos.push({
             name: path.basename(diag.videoPath),
@@ -1429,7 +1442,7 @@ class EmailReporter {
         }
         if (videos.length === 0) {
           const foundVideo = findVideoForTest(test.title);
-          if (foundVideo && fs.existsSync(foundVideo)) {
+          if (isUsableVideo(foundVideo)) {
             videos.push({
               name: path.basename(foundVideo),
               path: foundVideo,
