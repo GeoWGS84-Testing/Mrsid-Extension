@@ -4,18 +4,18 @@
 
 ![Playwright](https://img.shields.io/badge/Automation-Playwright-2EAD33?style=for-the-badge&logo=playwright&labelColor=0B1E36)
 ![Browser](https://img.shields.io/badge/Browser-Chrome%20MV3-orange?style=for-the-badge&logo=googlechrome&labelColor=0B1E36)
-![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions%208%20Shards-blue?style=for-the-badge&logo=githubactions&labelColor=0B1E36)
-![Testing](https://img.shields.io/badge/Testing-E2E%20%7C%2055%20Cases-purple?style=for-the-badge&labelColor=0B1E36)
+![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&labelColor=0B1E36)
+![Testing](https://img.shields.io/badge/Testing-E2E%20·%2055%20cases-7c3aed?style=for-the-badge&labelColor=0B1E36)
 ![Reports](https://img.shields.io/badge/Reports-Daily%20%2B%20QA%20Email-EA4335?style=for-the-badge&logo=gmail&labelColor=0B1E36)
 
 **End-to-End Automation for the MrSID Viewer Chrome Extension (MV3)**  
-*Upload · Process · Metadata · Map · Download — fully validated with CI & dual email reports*
+*Upload · Process · Metadata · Map · Download — every release validated*
 
 </div>
 
 ---
 
-## 📚 Table of Contents
+## Table of Contents
 
 1. [Project Overview](#1-project-overview)
 2. [Project Goals](#2-project-goals)
@@ -27,66 +27,64 @@
 8. [Test Data Architecture](#8-test-data-architecture)
 9. [Execution Strategy & Validation Categories](#9-execution-strategy--validation-categories)
 10. [Test Suite Overview](#10-test-suite-overview)
-11. [Ready & Viewport Testcases](#11-ready--viewport-testcases)
-12. [Valid Upload & Processing Testcases](#12-valid-upload--processing-testcases)
-13. [Invalid / Negative Upload Testcases](#13-invalid--negative-upload-testcases)
-14. [Metadata & GIS Map Testcases](#14-metadata--gis-map-testcases)
-15. [Multi-file, Drag-Drop & UI Controls](#15-multi-file-drag-drop--ui-controls)
-16. [Download TIFF Testcases](#16-download-tiff-testcases)
-17. [Large File / Performance Testcases](#17-large-file--performance-testcases)
-18. [Security & Empty Map Testcases](#18-security--empty-map-testcases)
-19. [Page Object Model](#19-page-object-model)
-20. [Fixtures, Utils & Reporting](#20-fixtures-utils--reporting)
-21. [Status Model, Warnings & Attachments](#21-status-model-warnings--attachments)
-22. [CI/CD Pipeline](#22-cicd-pipeline)
-23. [Configuration & Environment](#23-configuration--environment)
-24. [Setup & Running Tests](#24-setup--running-tests)
-25. [Troubleshooting & Quality Gates](#25-troubleshooting--quality-gates)
-26. [Future Enhancements & Summary](#26-future-enhancements--summary)
+11. [Per-Testcase Workflows](#11-per-testcase-workflows) ← diagrams, checks, criteria for every GV-TC
+12. [Page Object Model](#12-page-object-model)
+13. [Fixtures & Utilities](#13-fixtures--utilities)
+14. [Reporting & Status Model](#14-reporting--status-model)
+15. [CI/CD Pipeline](#15-cicd-pipeline)
+16. [Configuration & Environment](#16-configuration--environment)
+17. [Setup & Running Tests](#17-setup--running-tests)
+18. [Troubleshooting](#18-troubleshooting)
+19. [Quality Gates & Release](#19-quality-gates--release)
+20. [Future Enhancements](#20-future-enhancements)
 
 ---
 
 # 1. Project Overview
 
-The **MrSID Viewer Extension Automation Framework** is a Playwright-based E2E suite that validates the **Chrome MV3 MrSID Viewer** extension: install/load, popup UX, raster upload & processing, metadata, Leaflet map rendering, TIFF download, large files, security, and CI stability.
+The **MrSID Viewer Extension Automation Framework** is an end-to-end Playwright suite that validates functionality, reliability, GIS correctness, performance, and security of the **MrSID Viewer Chrome Extension (MV3)**.
 
 ```text
-Extension Load
-      │
-      ▼
-Popup Startup Validation
-      │
-      ▼
-File Upload (.sid / .tif / .tiff)
-      │
-      ▼
-Raster Processing (api.geowgs84.com)
-      │
-      ▼
-Metadata + Preview
-      │
-      ▼
-VIEW ON MAP (Leaflet)
-      │
-      ▼
-DOWNLOAD TIFF / CLEAR
-      │
-      ▼
-Reporting (Daily + QA emails)
+Extension load
+    → Popup ready
+    → File upload (.sid / .tif / .tiff)
+    → Raster processing (api.geowgs84.com)
+    → Metadata + preview
+    → VIEW ON MAP (Leaflet)
+    → DOWNLOAD TIFF
+    → Clear / negative / large / security paths
+    → Dual email reports
 ```
 
-**Release confidence covers:** extension loading, UI behaviour, supported formats, invalid handling, GIS metadata accuracy, map rendering, large datasets, security configuration, and CI/CD stability.
+**Release confidence** comes from automated checks on:
+
+| Area | Examples |
+| ---- | -------- |
+| Extension loading | MV3 load, popup open, System Ready |
+| UI behaviour | Idle chrome, viewport, zoom, clear |
+| Supported rasters | SID, GeoTIFF, TIFF, uppercase extensions |
+| Invalid handling | gif/jpg/pdf, empty, double-extension |
+| GIS metadata | Location, bounds, projection, resolution |
+| Map rendering | Leaflet layer, empty/malformed storage |
+| Large datasets | ~1GB–1.69GB fixtures |
+| Security | Manifest permissions, WAR, no secrets |
+| CI stability | 8 shards, retries, noise-free status |
 
 ---
 
 # 2. Project Goals
 
-| Goal | What we prove |
-| ---- | ------------- |
-| **Functional** | Open extension, upload, process, metadata, map, download |
-| **Compatibility** | MrSID, GeoTIFF, TIFF, projections, regions, large rasters |
-| **Reliability** | No crashes, stable processing, correct error handling |
-| **Continuous testing** | GitHub Actions, dual emails, artifacts, release gates |
+### Functional
+Open extension → upload → process → metadata → map → download TIFF → clear.
+
+### Compatibility
+MrSID, GeoTIFF, TIFF, large rasters, multiple projections/regions, uppercase extensions.
+
+### Reliability
+No crashes, no critical JS failures, stable processing, correct error handling on bad input.
+
+### Continuous testing
+GitHub Actions: scheduled + push/PR, shard matrix, daily director email, detailed QA email with logs/media on fail/retry.
 
 ---
 
@@ -97,11 +95,11 @@ Reporting (Daily + QA emails)
 | Automation | Playwright Test |
 | Language | JavaScript (ES modules) |
 | Browser | Chromium + unpacked MV3 extension |
-| Architecture | Page Object Model (`PopupPage`, `MapPage`) |
-| CI/CD | GitHub Actions (8 shards × 1 worker) |
-| Reporting | Custom `email-reporter.cjs` + HTML/JSON/JUnit/blob |
+| Extension APIs | Chrome extension test context |
+| CI/CD | GitHub Actions (8 shards) |
+| Reporting | Custom `email-reporter.cjs` + HTML/JUnit/blob |
+| Architecture | Page Object Model + fixtures |
 | Mail | Nodemailer (SMTP) |
-| VCS | Git |
 
 ---
 
@@ -109,17 +107,16 @@ Reporting (Daily + QA emails)
 
 ```mermaid
 flowchart TD
-  A[Developer Commit / Schedule / Manual] --> B[GitHub Repository]
+  A[Developer commit / schedule / manual] --> B[GitHub Repository]
   B --> C[GitHub Actions]
-  C --> D[Install Node + Playwright]
-  D --> E[Launch Chromium]
-  E --> F[Load MrSID Extension MV3]
-  F --> G[Execute Playwright Tests · 8 shards]
-  G --> H[Validation + DIAG]
-  H --> I[Merge Reports]
-  I --> J[Daily Email · Director]
-  I --> K[Detailed Email · QA]
-  I --> L[Artifacts · HTML · traces]
+  C --> D[Cleanup previous runs]
+  D --> E[Install Node + Playwright + cache fixtures]
+  E --> F[Launch Chromium · load MV3 extension]
+  F --> G[Execute tests across 8 shards]
+  G --> H[Merge blob reports · matrix]
+  H --> I[HTML / artifacts]
+  H --> J[Daily email — director]
+  H --> K[Detailed email — QA/Dev]
 ```
 
 ---
@@ -128,15 +125,24 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-  Tests[tests/*.spec.js · GV-TC-*] --> Fixtures[fixtures/extension.js + testData.js]
-  Fixtures --> Ext[extension/ MV3 package]
-  Ext --> Popup[popup.html / popup.js]
-  Ext --> Map[map.html / map.js + Leaflet]
-  Tests --> Pages[pages/PopupPage.js · MapPage.js]
-  Pages --> Utils[utils/helpers.js]
-  Utils --> Reporter[reporter/email-reporter.cjs]
-  Reporter --> Out[HTML · Email · CI summary]
+  T[tests/*.spec.js · GV-TC-*] --> F[fixtures/extension.js]
+  F --> EXT[extension/ MV3 package]
+  T --> P[pages/PopupPage.js]
+  T --> M[pages/MapPage.js]
+  P --> H[utils/helpers.js]
+  M --> H
+  F --> D[fixtures/testData.js]
+  H --> R[reporter/email-reporter.cjs]
+  R --> OUT[HTML · Email · CI summary]
 ```
+
+| Layer | Responsibility |
+| ----- | -------------- |
+| Specs | Business scenarios, arrange/act/assert |
+| Page objects | Selectors, numbered steps, waits |
+| Fixtures | Extension load, `extensionId`, test-data paths |
+| Helpers | `logInfo`, `showStep`, DIAG, screenshots |
+| Reporter | Status model, dual emails, attachments |
 
 ---
 
@@ -148,22 +154,23 @@ Mrsid-Extension/
 │   ├── manifest.json
 │   ├── popup.html / popup.js
 │   ├── map.html / map.js
-│   ├── logo / icons / leaflet /
-│   └── style.css
+│   ├── logo / leaflet / styles
+│   └── …
 ├── pages/
 │   ├── PopupPage.js           # Upload, process, metadata, download, clear
-│   └── MapPage.js             # Empty/malformed storage, raster map
+│   └── MapPage.js             # map.html, layers, empty state
 ├── fixtures/
-│   ├── extension.js           # Load extension + context + DIAG noise filter
-│   └── testData.js            # Paths to valid/invalid/large fixtures
-├── tests/                     # *.spec.js (GV-TC-* cases)
+│   ├── extension.js           # Load unpacked extension + context
+│   └── testData.js            # Central fixture path registry
+├── tests/                     # *.spec.js — GV-TC-* cases
 ├── test-data/
-│   ├── valid/                 # .sid .tif .tiff multi-file large
-│   ├── invalid/               # non-georeferenced / wrong types
+│   ├── valid/                 # SID, GeoTIFF, multi-file, large
+│   ├── invalid/               # non-georef, wrong types
 │   ├── corrupt/
-│   ├── boundary/              # empty, tiny, UPPERCASE names
-│   └── gis/                   # regional / projection sets
-├── utils/helpers.js           # showStep, logInfo, screenshots, DIAG
+│   ├── boundary/              # empty, tiny, UPPERCASE
+│   ├── gis/                   # regional / projection sets
+│   └── negative/
+├── utils/helpers.js           # Steps, logging, DIAG, overlays
 ├── reporter/
 │   ├── email-reporter.cjs     # Daily + detailed emails
 │   └── shard-metrics.cjs
@@ -179,25 +186,25 @@ Mrsid-Extension/
 
 ```mermaid
 sequenceDiagram
-  participant T as Test
+  participant Spec
   participant PW as Playwright
-  participant Ext as Extension
-  participant Pop as Popup
-  participant API as Processor API
-  participant Map as Map Viewer
-  participant R as Reporter
+  participant Ext as MV3 Extension
+  participant Popup
+  participant API as api.geowgs84
+  participant Map
+  participant Rep as Reporter
 
-  T->>PW: Start test
-  PW->>Ext: Load unpacked MV3
-  Ext->>Pop: Open popup.html
-  T->>Pop: Upload / UI actions
-  Pop->>API: Chunked upload + process
-  API-->>Pop: Status + metadata + preview
-  T->>Pop: VIEW ON MAP / DOWNLOAD / CLEAR
-  Pop->>Map: map.html + storage
-  Map-->>T: Assert layers / empty state
-  T->>R: onTestEnd status + logs
-  R-->>T: Daily + QA email aggregation
+  Spec->>PW: Start test
+  PW->>Ext: Load unpacked extension
+  Ext->>Popup: Open popup.html
+  Spec->>Popup: Upload / actions
+  Popup->>API: Chunked upload + process
+  API-->>Popup: Status + metadata + preview
+  Spec->>Popup: VIEW ON MAP / DOWNLOAD / CLEAR
+  Popup->>Map: map.html + storage
+  Map-->>Spec: Assert layer / empty state
+  Spec->>Rep: onTestEnd
+  Rep-->>Spec: Status + logs (+ media if fail/retry)
 ```
 
 ---
@@ -206,39 +213,45 @@ sequenceDiagram
 
 ```text
 test-data/
-├── valid/          01_NAIP_*.sid/.tif, GeoTIFF, multi-file set, UPPERCASE
-├── invalid/        non-georeferenced, unsupported types
-├── corrupt/        damaged headers
-├── boundary/       empty, tiny, special names
+├── valid/          01_NAIP_*.sid/.tif, multi-file set, large_1GB*, Ireland 1.69GB
+├── invalid/        non_georeferenced.*, unsupported types
+├── corrupt/        corrupt.sid / .tif
+├── boundary/       empty.tif, tiny.sid, VALID_UPPER_*.SID/.TIF
 ├── gis/            hemisphere / projection variants
-└── large (via cache/Drive in CI)
-                    large_1GB_MrSID.sid
-                    large_1.3GB Alaska .sid
-                    1.69GB Ireland GeoTIFF
+└── negative/       deceptive names, no-extension samples
 ```
 
-Registry: `fixtures/testData.js` (`TestData.validSid`, `large1GB`, …).
+| Category | Use |
+| -------- | --- |
+| valid | Happy path, map, download, regression |
+| invalid / negative | Client rejection, no false success |
+| corrupt | Stable error handling |
+| gis | Metadata + map placement |
+| large-files | `@large-file` performance / stability |
+| boundary | Empty, uppercase, edge filenames |
+
+Paths are centralized in `fixtures/testData.js` (`TestData.validSid`, `TestData.large1GB`, …).
 
 ---
 
 # 9. Execution Strategy & Validation Categories
 
 ```text
-Arrange → load extension + open popup
-Act     → upload / click / map / download
-Assert  → status, metadata, UI, map, downloads
-Report  → logs + optional SS/video + emails
+Arrange → load extension / open popup
+Act     → upload, click, map, download
+Assert  → status, metadata, UI, map, download event
+Report  → logInfo + email status model
 ```
 
 | Category | Purpose |
 | -------- | ------- |
-| UI | Popup idle/success chrome |
-| Functional | Upload → process → map → download |
-| Negative | Reject bad types / empty files |
-| GIS | Metadata, bounds, map placement |
-| Performance | 1GB–1.69GB rasters |
-| Security | Manifest, WAR, no secrets |
-| Regression | Full suite on every CI run |
+| UI | Popup idle, viewport, controls |
+| Functional | Upload → process → preview → map → TIFF |
+| Negative | Unsupported / empty / deceptive files |
+| GIS | Projection, bounds, hemispheres, placement |
+| Performance | GB-scale SID/GeoTIFF |
+| Security | Manifest, WAR, secret scan |
+| Regression | Full suite on CI |
 
 ---
 
@@ -246,69 +259,84 @@ Report  → logs + optional SS/video + emails
 
 **~55 tests** · project `chromium-extension` · tags `@smoke` `@p0` `@p1` `@p2` `@upload` `@map` `@large-file` `@security`
 
-| Area | Example IDs | Focus |
-| ---- | ----------- | ----- |
-| Ready / viewport | GV-TC-001-* | Idle UI, accept, logo, layout |
-| Valid upload | GV-TC-003-*, 002-01, 010-01, 014-01 | SID/TIF success path |
-| Invalid | GV-TC-004-*, 005-04 | Reject / no false success |
-| Metadata & map | GV-TC-006-*, 009-*, 008-07 | GIS placement, layers |
-| DnD / UI | GV-TC-003-04, 010-02, 008-* | Drop, zoom, multi-file |
-| Download | GV-TC-014-03 | Real browser download |
-| Large | GV-TC-006-08*, 014-02, 023-02 | GB-scale stability |
-| Security / map edge | GV-TC-022-*, 002-01b, 002-02 | Manifest, empty/malformed map |
+| Suite area | Typical specs | Focus |
+| ---------- | ------------- | ----- |
+| Startup / ready | `01-popup.ready`, `12-ui.viewport` | System Ready, logo, accept, layout |
+| Valid upload | `02-popup.upload.valid` | SID/TIF/TIFF, map, clear, TIFF button |
+| Invalid | `03-popup.upload.invalid` | Reject bad types / empty |
+| Metadata & map | `09-metadata.map.*` | Regional / rotated / multi-layer |
+| DnD / multi / UI | `05`, `10-upload.dragdrop` | Drop, progress, zoom |
+| Download | `13-download.tiff` | Real browser download |
+| Large | `08-large.file` | 1–1.69GB |
+| Security / empty map | `11-security`, `14-map.empty` | Manifest, empty/malformed storage |
 
 ---
 
-# 11. Ready & Viewport Testcases
+# 11. Per-Testcase Workflows
 
-### GV-TC-001-01 — Popup opens · System Ready
+Each case below includes **objective**, **workflow diagram**, **what is checked**, and **pass / fail criteria**.
 
-**Objective:** Idle popup is ready before any upload.
+Legend: blue = action · yellow = wait/decision · green = pass · red = fail.
+
+---
+
+## 11.1 Ready & Viewport
+
+### GV-TC-001-01 — Popup opens and shows System Ready
+
+**Objective:** Idle popup is fully ready before any upload.
 
 ```mermaid
 flowchart TD
   A[Launch Chromium + load MV3] --> B[Open popup.html]
-  B --> C[Drop area visible]
-  C --> D[Logo visible]
-  D --> E[Loader + preview hidden]
-  E --> F[Status = System Ready]
-  F --> G[Timer = 0 sec]
-  G --> H[VIEW ON MAP + CLEAR visible]
-  H --> I[DOWNLOAD TIFF hidden]
-  I --> P[✅ PASS]
-  C -.->|missing| X[❌ FAIL]
-  F -.->|wrong status| X
-
+  B --> C{Drop area visible?}
+  C -->|No| X[❌ FAIL]
+  C -->|Yes| D[Validate idle UI]
+  D --> D1[Logo visible]
+  D --> D2[Loader hidden]
+  D --> D3[Preview hidden]
+  D --> D4[Status = System Ready]
+  D --> D5[Timer = 0 sec]
+  D --> D6[VIEW ON MAP + CLEAR visible]
+  D --> D7[DOWNLOAD TIFF hidden]
+  D1 --> E{All OK?}
+  D2 --> E
+  D3 --> E
+  D4 --> E
+  D5 --> E
+  D6 --> E
+  D7 --> E
+  E -->|Yes| P[✅ PASSED]
+  E -->|No| X
   style P fill:#bbf7d0,stroke:#16a34a
   style X fill:#fecaca,stroke:#dc2626
 ```
 
 | Check | Criteria |
 | ----- | -------- |
-| Load | Popup opens, no crash |
+| Extension | Loads; popup opens |
 | Status | System Ready |
 | Timer | Idle **0 sec** |
-| Buttons | Map/Clear on; Download off |
+| Buttons | Map + Clear on; Download TIFF off |
 
 **Fails when:** popup crash, missing controls, wrong idle state.
 
 ---
 
-### GV-TC-001-02 — File input `accept` lists supported extensions
+### GV-TC-001-02 — File input accept lists supported extensions
 
 ```mermaid
 flowchart TD
   A[Open popup] --> B[Read #fileInput accept]
   B --> C{Includes .sid and .tif?}
-  C -->|Yes| P[✅ PASS]
+  C -->|Yes| P[✅ PASSED]
   C -->|No| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
 | Check | Criteria |
 | ----- | -------- |
-| accept | Contains `.sid` and `.tif` (plus packaged types) |
+| `accept` | Contains `.sid` and `.tif` (plus packaged types) |
 
 ---
 
@@ -319,23 +347,25 @@ flowchart TD
   A[Open popup] --> B[Wait System Ready]
   B --> C[Collect console]
   C --> D{Critical errors after noise filter?}
-  D -->|No| P[✅ PASS]
+  D -->|No| P[✅ PASSED]
   D -->|Yes| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
+| Check | Criteria |
+| ----- | -------- |
+| Console | No product-critical errors; infra noise ignored |
+
 ---
 
-### GV-TC-001-04 — Logo static asset renders
+### GV-TC-001-04 — Popup static assets render (logo)
 
 ```mermaid
 flowchart TD
-  A[Open popup] --> B[Measure logo natural size]
-  B --> C{Width/Height > 0?}
-  C -->|Yes| P[✅ PASS e.g. 1015×327]
+  A[Open popup] --> B[Logo image]
+  B --> C{naturalWidth/Height > 0?}
+  C -->|Yes| P[✅ PASSED]
   C -->|No| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
@@ -346,54 +376,56 @@ flowchart TD
 ```mermaid
 flowchart TD
   A[Set viewport] --> B[Open popup]
-  B --> C[Drop + buttons in view]
+  B --> C[Drop + primary buttons in view]
   C --> D{No severe horizontal overflow?}
   D -->|OK| P[✅ Layout OK]
   D -->|Broken| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
+| Viewport | Criteria |
+| -------- | -------- |
+| 1920 / 1366 / 800 | Controls usable; layout stable |
+
 ---
 
-# 12. Valid Upload & Processing Testcases
+## 11.2 Valid Upload & Processing
 
-**Shared success pipeline**
+Shared pipeline:
 
 ```mermaid
 flowchart TD
-  S[System Ready] --> U[Upload file]
+  S[System Ready] --> U[Submit file]
   U --> E[EXTRACTING GEODATA]
   E --> A[Analysis Complete]
-  A --> T[Timer PROCESSED: Xs]
-  T --> Pv[Preview visible]
-  Pv --> M[Metadata grid]
+  A --> T[Timer PROCESSED]
+  T --> V[Preview visible]
+  V --> M[Metadata grid]
 ```
-
----
 
 ### GV-TC-003-01 — Valid .sid → preview + full metadata
 
 ```mermaid
 flowchart TD
-  A[Idle OK] --> B[Upload 01_NAIP_2014_WGS84.sid]
-  B --> C[Wait Analysis Complete]
-  C --> D[Timer PROCESSED]
-  D --> E[Preview dimensions]
-  E --> F[Metadata: Filename Location Resolution Projection Format Bounds]
-  F --> G[DOWNLOAD TIFF visible]
-  G --> P[✅ PASS]
-  C -.->|timeout / product error| X[❌ FAIL]
-
+  A[Open popup · idle OK] --> B[Upload 01_NAIP_2014_WGS84.sid]
+  B --> C[Wait EXTRACTING then Analysis Complete]
+  C --> D{Complete in timeout?}
+  D -->|No| X[❌ FAIL]
+  D -->|Yes| E[Timer PROCESSED]
+  E --> F[Preview dimensions e.g. 1024×991]
+  F --> G[Metadata: Filename Location Resolution Projection Format Bounds]
+  G --> H[DOWNLOAD TIFF visible]
+  H --> P[✅ PASSED]
   style P fill:#bbf7d0,stroke:#16a34a
+  style X fill:#fecaca,stroke:#dc2626
 ```
 
 | Criterion | Expected |
 | --------- | -------- |
 | Status | Analysis Complete |
 | Preview | Visible, non-zero size |
-| Metadata | Core keys populated |
-| TIFF btn | Visible for SID |
+| Metadata | Core GIS fields present |
+| TIFF button | Visible for SID |
 
 ---
 
@@ -403,8 +435,7 @@ flowchart TD
 flowchart TD
   A[Upload GeoTIFF .tif] --> B[Analysis Complete]
   B --> C[Preview + metadata]
-  C --> P[✅ PASS]
-
+  C --> P[✅ PASSED]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
@@ -416,9 +447,8 @@ flowchart TD
 flowchart TD
   A[Upload .tiff] --> B{Processing starts?}
   B -->|Yes| C[Completes successfully]
-  C --> P[✅ PASS]
+  C --> P[✅ PASSED]
   B -->|No| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
@@ -428,10 +458,10 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  A[Upload UPPERCASE extension file] --> B{Rejected as unknown?}
-  B -->|No · processes| P[✅ PASS]
+  A[Upload UPPERCASE extension] --> B{Rejected as unknown?}
   B -->|Yes| X[❌ FAIL]
-
+  B -->|No| C[Analysis Complete + preview]
+  C --> P[✅ PASSED]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
@@ -444,11 +474,14 @@ flowchart TD
   A[SID processed] --> B[Click VIEW ON MAP]
   B --> C[Open map.html]
   C --> D{Leaflet map + raster layer?}
-  D -->|Yes| P[✅ PASS]
+  D -->|Yes| P[✅ PASSED]
   D -->|No| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
+
+| Criterion | Expected |
+| --------- | -------- |
+| Map | Loads; raster highlighted/visible |
 
 ---
 
@@ -457,10 +490,9 @@ flowchart TD
 ```mermaid
 flowchart TD
   A[Success state] --> B[Click CLEAR]
-  B --> C{System Ready + preview cleared?}
-  C -->|Yes| P[✅ PASS]
+  B --> C{System Ready + preview gone?}
+  C -->|Yes| P[✅ PASSED]
   C -->|No| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
@@ -470,467 +502,360 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  A[SID Analysis Complete] --> B{#downloadTiff visible?}
-  B -->|Yes| P[✅ PASS]
+  A[SID complete] --> B{#downloadTiff visible?}
+  B -->|Yes| P[✅ PASSED]
   B -->|No| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
 ---
 
-# 13. Invalid / Negative Upload Testcases
+## 11.3 Invalid / Negative Uploads
 
 ### GV-TC-004-01 — Unsupported .gif rejected client-side
 
 ```mermaid
 flowchart TD
-  A[Select .gif] --> B{Client validation}
-  B -->|Reject · no success| P[✅ PASS]
-  B -->|False success| X[❌ FAIL]
-
+  A[Select .gif] --> B{Analysis Complete / success preview?}
+  B -->|Yes| X[❌ FAIL]
+  B -->|No — rejected| P[✅ PASSED]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
-
----
 
 ### GV-TC-004-01b — .jpg / .png / .pdf rejected
 
 ```mermaid
 flowchart TD
-  A[For each unsupported type] --> B[Submit]
-  B --> C{Analysis Complete success?}
-  C -->|No| P[✅ PASS]
+  A[Each unsupported type] --> B[Submit]
+  B --> C{Treated as raster success?}
+  C -->|No| P[✅ PASSED]
   C -->|Yes| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
-
----
 
 ### GV-TC-004-02 — Deceptive double-extension rejected
 
 ```mermaid
 flowchart TD
-  A[Upload deceptive name] --> B{Bypasses type check?}
-  B -->|Blocked| P[✅ PASS]
-  B -->|Accepted as raster| X[❌ FAIL]
-
+  A[Deceptive filename] --> B{Bypasses validation?}
+  B -->|Blocked| P[✅ PASSED]
+  B -->|Success path| X[❌ FAIL]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
-
----
 
 ### GV-TC-004-03 — No extension rejected
 
 ```mermaid
 flowchart TD
-  A[File without extension] --> B{Treated as SID raster?}
-  B -->|Rejected| P[✅ PASS]
-  B -->|Accepted| X[❌ FAIL]
-
+  A[File without extension] --> B{Accepted as SID/TIF?}
+  B -->|No| P[✅ PASSED]
+  B -->|Yes| X[❌ FAIL]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
-
----
 
 ### GV-TC-005-04 — Empty / zero-byte does not produce success
 
 ```mermaid
 flowchart TD
-  A[Upload empty file] --> B{Success preview / Analysis Complete?}
-  B -->|No| P[✅ PASS]
+  A[Upload empty file] --> B{Success UI?}
+  B -->|No| P[✅ PASSED]
   B -->|Yes| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
-**Corrupt / damaged rasters (suite coverage):** detect invalid data, no crash, meaningful non-success path (see `test-data/corrupt`).
+**Pass rule (all negative):** file rejected or non-success; **no crash**.
 
 ---
 
-# 14. Metadata & GIS Map Testcases
-
-### GV-TC-006-* (e.g. 006-01, 006-03, 006-04, 006-05a/b, 006-06, 006-07, 006-07b)
-
-**Objective:** Regional / rotated / projection variants → correct metadata and map placement.
+## 11.4 Metadata & Map Placement (GV-TC-006-*, 009-*)
 
 ```mermaid
 flowchart TD
-  A[Upload GIS fixture] --> B[Analysis Complete]
+  A[Upload regional / rotated fixture] --> B[Analysis Complete]
   B --> C[Validate Location / Bounds / Projection]
   C --> D[VIEW ON MAP]
   D --> E{Map stable + layer?}
-  E -->|Yes| P[✅ PASS]
+  E -->|Yes| P[✅ PASSED]
   E -->|No| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
-| Example ID | Focus |
-| ---------- | ----- |
-| GV-TC-006-04 | SW hemisphere satellite |
-| GV-TC-006-07b | Rotated NAIP map placement `@map` |
+| IDs | Focus |
+| --- | ----- |
+| GV-TC-006-01 … 006-07b | Regions, SW hemisphere, rotated NAIP `@map` |
+| GV-TC-009-01 … 009-04 | Extra metadata / edge placements |
 
-**Criteria:** Coherent metadata; map does not crash; raster layer when expected.
-
----
-
-### GV-TC-009-01 … 009-04 — Extra metadata / edge asserts
-
-```mermaid
-flowchart TD
-  A[Upload tagged fixture] --> B[Process]
-  B --> C[Assert specific keys / UI]
-  C --> D[Optional map check]
-  D --> P[✅ PASS]
-
-  style P fill:#bbf7d0,stroke:#16a34a
-```
+**Criteria:** Metadata matches fixture; map does not crash; layer present when expected.
 
 ---
 
-### Hemisphere / boundary GIS intent
-
-Northern/Southern/E-W longitudes and edge coordinates are exercised via GIS fixtures under `test-data` + GV-TC-006/009 family: coordinates → projection → map location → assert.
-
----
-
-# 15. Multi-file, Drag-Drop & UI Controls
+## 11.5 Multi-file, Drag-Drop & UI
 
 ### GV-TC-003-04 — Drag & drop valid .sid
 
 ```mermaid
 flowchart TD
-  A[Idle popup] --> B[Drop .sid on #dropArea]
-  B --> C[Analysis Complete]
-  C --> D[Preview + metadata]
-  D --> P[✅ PASS — same as file input]
-
+  A[Drop .sid on #dropArea] --> B[Analysis Complete]
+  B --> C[Preview + metadata]
+  C --> P[✅ Same as file-input path]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
----
-
-### GV-TC-008-05 / 008-06a / 008-06b / 008-06c — Multi-file progress
+### GV-TC-008-05 / 008-06a–c — Multi-file progress variants
 
 ```mermaid
 flowchart TD
-  A[Select multi-file subset] --> B[Observe progress/status]
-  B --> C{UI coherent?}
-  C -->|Yes| P[✅ PASS]
+  A[Multi-file subset] --> B[Progress / status UI]
+  B --> C{Coherent status?}
+  C -->|Yes| P[✅ PASSED]
   C -->|No| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
-
----
 
 ### GV-TC-008-07 — Multi-file set + map layers
 
 ```mermaid
 flowchart TD
   A[Full multi-file set] --> B[All process]
-  B --> C[Open map]
-  C --> D{Layers / stable?}
-  D -->|Fail| R[Retry]
-  R --> D
-  D -->|Yes| P[✅ PASS · may be PASSED*]
+  B --> C[Open map · layers]
+  C --> D{OK or retry then OK?}
+  D -->|Yes| P[✅ PASSED / PASSED*]
   D -->|No| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
-
----
 
 ### GV-TC-010-02 — Zoom controls after preview
 
 ```mermaid
 flowchart TD
-  A[Success preview] --> B[zoomIn visible]
-  B --> C[zoomOut visible]
-  C --> D[reset present]
-  D --> P[✅ PASS]
-
+  A[Preview ready] --> B[zoomIn / zoomOut / reset visible]
+  B --> P[✅ PASSED]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
----
-
-### GV-TC-011 / 012 / 013 — Additional UI / status variants
+### GV-TC-011-01 / 011-02 / 012-01 / 013-01 — UI / status variants
 
 ```mermaid
 flowchart TD
-  A[Drive UI to target state] --> B[Assert control or status]
+  A[Drive UI to target state] --> B[Assert control or copy]
   B --> C{Matches product?}
-  C -->|Yes| P[✅ PASS]
+  C -->|Yes| P[✅ PASSED]
   C -->|No| X[❌ FAIL]
-
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
 ---
 
-# 16. Download TIFF Testcases
+## 11.6 Download TIFF
 
-### GV-TC-014-03 — Click DOWNLOAD TIFF starts download
+### GV-TC-014-03 — Click starts a download
 
 ```mermaid
 flowchart TD
-  A[SID complete] --> B[Button visible]
-  B --> C[Click DOWNLOAD TIFF]
-  C --> D{Download event?}
-  D -->|Yes · .tif name| P[✅ PASS]
-  D -->|No| X[❌ FAIL]
-
+  A[SID complete · button visible] --> B[Click DOWNLOAD TIFF]
+  B --> C{Playwright download event?}
+  C -->|Yes · .tif name| P[✅ PASSED]
+  C -->|No| X[❌ FAIL]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
-| Check | Criteria |
-| ----- | -------- |
-| Event | Playwright download fired |
+| Criterion | Expected |
+| --------- | -------- |
+| Event | Download starts |
 | Name | e.g. `01_NAIP_2014_WGS84.tif` |
-| Size | Non-zero when file retained |
-
-```mermaid
-sequenceDiagram
-  participant U as Test
-  participant P as Popup
-  participant B as Browser
-  U->>P: Click DOWNLOAD TIFF
-  P->>B: Trigger download
-  B-->>U: download event + .tif
-```
 
 ---
 
-# 17. Large File / Performance Testcases
+## 11.7 Large Files (`@large-file`)
 
-> Tag `@large-file` · long `PW_PROCESSING_TIMEOUT_MS` · CI retries up to 2 · Drive/cache fixtures
-
-### GV-TC-006-08 — ~1GB MrSID → preview + metadata
+| ID | Fixture | Validates |
+| -- | ------- | --------- |
+| GV-TC-006-08 | ~1GB MrSID | Preview + metadata |
+| GV-TC-006-08b | ~1.3GB Alaska | Preview |
+| GV-TC-006-08c | ~1.69GB Ireland GeoTIFF | Preview |
+| GV-TC-014-02 | 1GB | VIEW ON MAP + highlight |
+| GV-TC-023-02 | 1GB | Process-time baseline logged |
 
 ```mermaid
 flowchart TD
-  A[Upload large_1GB_MrSID.sid] --> B[Chunked API upload]
+  A[Upload GB-scale file] --> B[Chunked API upload]
   B --> C{Transient session errors?}
-  C -->|Re-init · retry chunks| B
-  C -->|Done| D[Analysis Complete]
-  D --> E[Preview + metadata]
-  E --> P[✅ PASS]
-
+  C -->|Re-init / retry chunks| B
+  C -->|Done| D[Long wait → Analysis Complete]
+  D --> E[Preview / map / timing as per case]
+  E --> P[✅ PASSED]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
-**Noise:** “Upload not initialized” / chunk retries are filtered — not Pass+Warn.
+| Criterion | Expected |
+| --------- | -------- |
+| Complete | Within extended timeout |
+| Stability | No crash; preview when required |
+| Status noise | Upload 400 / re-init **not** Pass+Warn |
 
 ---
 
-### GV-TC-006-08b — ~1.3GB Alaska MrSID → preview
-
-```mermaid
-flowchart TD
-  A[Upload 1.3GB SID] --> B[Complete] --> C[Preview] --> P[✅ PASS]
-  style P fill:#bbf7d0,stroke:#16a34a
-```
-
----
-
-### GV-TC-006-08c — ~1.69GB Ireland GeoTIFF → preview
-
-```mermaid
-flowchart TD
-  A[Upload 1.69GB TIF] --> B[Complete] --> C[Preview] --> P[✅ PASS]
-  style P fill:#bbf7d0,stroke:#16a34a
-```
-
----
-
-### GV-TC-014-02 — Large VIEW ON MAP + highlight
-
-```mermaid
-flowchart TD
-  A[1GB processed] --> B[VIEW ON MAP] --> C[Raster highlight] --> P[✅ PASS]
-  style P fill:#bbf7d0,stroke:#16a34a
-```
-
----
-
-### GV-TC-023-02 — Record process time baseline (1GB)
-
-```mermaid
-flowchart TD
-  A[Upload 1GB] --> B[Measure until complete] --> C[Log baseline] --> P[✅ PASS]
-  style P fill:#bbf7d0,stroke:#16a34a
-```
-
-**Pass criteria (large):** completes within timeout; browser stable; preview present; no fatal memory errors.
-
----
-
-# 18. Security & Empty Map Testcases
+## 11.8 Security & Empty Map
 
 ### GV-TC-022-01 — Manifest permissions minimal (MV3)
 
 ```mermaid
 flowchart TD
-  A[Read manifest.json] --> B{permissions minimal storage?}
-  B --> C{host_permissions only API?}
-  C -->|Yes| P[✅ PASS]
-  B -->|Over-scoped| X[❌ FAIL]
-
+  A[Read manifest.json] --> B{permissions minimal e.g. storage?}
+  B -->|Extra risky| X[❌ FAIL]
+  B -->|OK| C{host_permissions only API host?}
+  C -->|OK| P[✅ PASSED]
+  C -->|Too wide| X
   style P fill:#bbf7d0,stroke:#16a34a
 ```
-
----
 
 ### GV-TC-022-02 — web_accessible_resources documented
 
 ```mermaid
 flowchart TD
-  A[Read WAR] --> B[Log resources + matches] --> C[Assert expected public assets] --> P[✅ PASS]
+  A[Read WAR] --> B[Log resources + matches]
+  B --> C[Expected assets listed]
+  C --> P[✅ PASSED]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
-
----
 
 ### GV-TC-022-05 — No obvious secrets in package
 
 ```mermaid
 flowchart TD
-  A[Scan packaged files] --> B{API keys / passwords / tokens?}
-  B -->|None| P[✅ PASS]
+  A[Scan packaged files] --> B{Keys / passwords / tokens?}
   B -->|Found| X[❌ FAIL]
-
+  B -->|Clean| P[✅ PASSED]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
----
-
-### GV-TC-002-01b — map.html empty state without data
+### GV-TC-002-01b — map.html empty state
 
 ```mermaid
 flowchart TD
-  A[Open map · empty storage] --> B{Crash?}
-  B -->|No| C[Empty-state message]
-  C --> P[✅ PASS]
+  A[Open map with empty storage] --> B{Crash?}
   B -->|Yes| X[❌ FAIL]
-
+  B -->|No| C[Empty-state message]
+  C --> P[✅ PASSED]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
-
----
 
 ### GV-TC-002-02 — Malformed mapDataList does not crash
 
 ```mermaid
 flowchart TD
-  A[Seed not-json] --> B[Seed {}] --> C[Seed []] --> D[Seed broken object]
-  D --> E{Any crash?}
-  E -->|No| P[✅ PASS]
-  E -->|Yes| X[❌ FAIL]
-
+  A[Seed not-json / {} / [] / broken] --> B[Open map each time]
+  B --> C{Any crash?}
+  C -->|No| P[✅ PASSED]
+  C -->|Yes| X[❌ FAIL]
   style P fill:#bbf7d0,stroke:#16a34a
 ```
 
 ---
 
-# 19. Page Object Model
+# 12. Page Object Model
 
 ```mermaid
 flowchart TD
-  Tests --> PopupPage
-  Tests --> MapPage
+  Specs --> PopupPage
+  Specs --> MapPage
   PopupPage --> ExtensionUI
-  MapPage --> LeafletMap
+  MapPage --> ExtensionUI
 ```
 
-**PopupPage:** open, upload/DnD, wait processing, metadata, preview, VIEW ON MAP, DOWNLOAD TIFF, CLEAR, zoom controls.
+**PopupPage:** open, idle validate, upload / drag-drop, wait processing, metadata, preview, VIEW ON MAP, DOWNLOAD TIFF, CLEAR, zoom controls.
 
-**MapPage:** open map, empty/malformed storage diagnostics, layer presence.
+**MapPage:** open `map.html`, empty-state diagnostics, layer presence, malformed storage seeds.
 
-Tests call page methods — not raw selectors — for maintainability.
+**Rule:** selectors and clicks live in page objects; specs describe behaviour.
 
 ---
 
-# 20. Fixtures, Utils & Reporting
+# 13. Fixtures & Utilities
 
-| Layer | Role |
-| ----- | ---- |
-| `fixtures/extension.js` | Chromium + `--load-extension`, extensionId, DIAG noise filter |
-| `fixtures/testData.js` | Central fixture paths |
-| `utils/helpers.js` | `showStep`, `logInfo` → terminal + shard DIAG (`test-step`), screenshots |
-| `reporter/email-reporter.cjs` | Daily + detailed emails, status model, attachments |
-| `reporter/shard-metrics.cjs` | Per-shard matrix |
+### Extension fixture
+Browser launch · `--load-extension` · `extensionId` · console/DIAG hooks · noise filters.
+
+### testData fixture
+Stable paths for valid/invalid/large/boundary GIS files.
+
+### helpers.js
+`setContext`, `showStep`, `logInfo` (also → shard DIAG as `test-step`), warnings/errors, screenshots, visual overlays.
+
+---
+
+# 14. Reporting & Status Model
+
+### Dual emails
+
+| Email | Env | Audience | Content |
+| ----- | --- | -------- | ------- |
+| Daily | `DAILY_REPORT_EMAILS` | Director | Passed · Pass+Warn · Failed · Skipped |
+| Detailed | `FAILURE_ALERT_EMAILS` | QA / Dev | Per-test START/END logs; SS/video on fail/retry |
+
+### Status priority
+
+```text
+1. FAILED               final failed | timedOut
+2. SKIPPED              skipped | skip-logic
+3. PASSED WITH WARNING  passed + real product warnings
+4. PASSED               passed + no real warnings
+                        (retry→pass counts as Passed; QA badge PASSED*)
+```
 
 ```mermaid
 flowchart TD
-  Exec[Test execution] --> PW[Playwright result]
-  PW --> ER[email-reporter]
-  ER --> Daily[DAILY_REPORT_EMAILS]
-  ER --> QA[FAILURE_ALERT_EMAILS]
-  PW --> HTML[playwright-report]
+  A[Test ends] --> B{Playwright status}
+  B -->|failed/timedOut| F[FAILED + media]
+  B -->|skipped| S[SKIPPED]
+  B -->|passed| C{Real warnings after filter?}
+  C -->|yes| W[PASS + WARN · logs only]
+  C -->|no| P[PASSED / PASSED* if retry]
 ```
 
----
+### Attachments
 
-# 21. Status Model, Warnings & Attachments
-
-**Priority:** `FAILED` → `SKIPPED` → `PASSED WITH WARNING` → `PASSED`
-
-| Status | Rule |
-| ------ | ---- |
-| FAILED | Playwright `failed` / `timedOut` |
-| SKIPPED | Playwright skipped / skip-logic |
-| PASS + WARN | `passed` + **real product** warnings after noise filter |
-| PASSED | `passed` + no real warnings (includes retry→pass) |
-| PASSED* | QA badge only when `hadRetry` |
-
-**Noise (never Pass+Warn):** upload not initialized, chunk retry, HTTP 400/404, tracing, CDP, target closed, browser-memory heap.
-
-**Attachments**
-
-| Scenario | SS | Video |
-| -------- | -- | ----- |
-| FAILED | Yes | Yes (≥50KB) |
+| Scenario | Screenshot | Video |
+| -------- | ---------- | ----- |
+| FAILED | Yes | Yes (≥ 50 KB) |
 | Retry recovered | Yes | Yes |
-| PASS + WARN | No | No |
-| Clean PASSED | No | No |
+| Pass+Warn / clean pass | No | No |
 
-Director email: counts only. QA email: full START/END step logs.
+**Noise ignored:** upload not initialized, chunk retry, HTTP 400/404, CDP, tracing, target closed, browser-memory heap.
 
 ---
 
-# 22. CI/CD Pipeline
+# 15. CI/CD Pipeline
 
 ```mermaid
 flowchart TD
-  A[Push / PR / Cron 07:30 UTC / workflow_dispatch] --> B[🧹 Delete ALL previous completed runs]
-  B --> C[📦 Prepare + fixture cache]
-  C --> D[🧪 Matrix shards 1–8 · 1 worker each]
-  D --> E[📈 Merge blob + matrix + HTML]
-  E --> F[📬 Daily summary email]
-  E --> G[📬 Detailed QA email]
+  A[Push / PR / cron 07:30 UTC / manual] --> B[Delete ALL previous completed runs]
+  B --> C[Prepare · discover tests · fixture cache]
+  C --> D[Matrix shards 1–8 · 1 worker each]
+  D --> E[Merge blobs · dashboard · artifacts]
+  E --> F[Daily email]
+  E --> G[QA detailed email]
 ```
 
-**Stages:** checkout → Node 22 → `npm ci` → Playwright Chromium → sharded `npx playwright test` → merge → email.
+Stages: cleanup → prepare → test matrix → consolidated report → email.
 
-**Parallelism:** 8 shards (not random workers sharing one extension context). Large fixtures cached (`FIXTURE_CACHE_VERSION`).
+Parallelism: **8 shards** (not unbounded workers on one extension context). Large fixtures cached (Drive IDs in workflow env).
 
 ---
 
-# 23. Configuration & Environment
+# 16. Configuration & Environment
 
-### `playwright.config.js`
+### playwright.config.js (typical)
 
 | Setting | Value |
 | ------- | ----- |
 | Project | `chromium-extension` |
-| fullyParallel | true (per-test sharding) |
-| Retries | 1 on CI (large describe may use 2) |
+| fullyParallel | true (shard by test) |
+| Retries | 1 on CI; large-file describe may use 2 |
 | Trace | `on-first-retry` |
 | Screenshot | `only-on-failure` |
 | Video | `retain-on-failure` |
+| Timeout | Elevated for processing / large files |
 
 ### Environment
 
@@ -941,87 +866,123 @@ SMTP_SECURE=false
 SMTP_USER=...
 SMTP_PASS=app_password_no_spaces
 SMTP_FROM=...
-DAILY_REPORT_EMAILS=director@...
-FAILURE_ALERT_EMAILS=qa@...,dev@...
+DAILY_REPORT_EMAILS=...
+FAILURE_ALERT_EMAILS=...
 ENABLE_EMAIL_REPORTER=true
-PW_PROCESSING_TIMEOUT_MS=1800000
+PW_PROCESSING_TIMEOUT_MS=...   # optional
 ```
 
-> Gmail **App Password** required; trim secrets (no trailing newlines).
+Use Gmail **App Passwords**; trim secrets (no trailing newlines).
 
 ---
 
-# 24. Setup & Running Tests
+# 17. Setup & Running Tests
+
+### Requirements
+
+| Item | Version |
+| ---- | ------- |
+| OS | Linux / Windows / macOS |
+| Node.js | 18+ (CI uses 22) |
+| npm | 9+ |
+| Browser | Chromium via Playwright |
+
+### Install
 
 ```bash
 git clone <repo-url> && cd Mrsid-Extension
 npm ci
 npx playwright install --with-deps chromium
+```
 
-# Full suite
-npx playwright test
+### Commands
 
-# Exclude large
+```bash
+npx playwright test                          # full suite
 npx playwright test --grep-invert @large-file
-
-# Large / security / one case
 npx playwright test --grep @large-file
 npx playwright test --grep @security
 npx playwright test -g "GV-TC-003-01"
-
-# Headed / debug / report
 npx playwright test --headed
 npx playwright test --debug -g "GV-TC-001-01"
 npx playwright show-report
 ```
 
-**Modes:** Local (headed, debug) vs CI (headless, shards, retries, emails).
+### CI manual run
+**Actions → Playwright Tests - MrSID Viewer Extension → Run workflow**  
+(optional grep, send_report, headless, debug).
 
 ---
 
-# 25. Troubleshooting & Quality Gates
+# 18. Troubleshooting
 
 | Issue | Checks |
 | ----- | ------ |
 | Extension does not load | `extension/manifest.json`, path, MV3 service worker |
-| Upload failures | Fixture path, API reachability, timeouts |
-| Map blank | Processing success, storage payload, Leaflet |
-| Large timeout | `PW_PROCESSING_TIMEOUT_MS`, shard logs, retries |
-| Email DNS/auth | Trimmed `SMTP_*`, App Password |
-| CI ≠ local | Chromium version, missing large fixtures, secrets |
+| Upload failures | Fixture path exists, API reachability, timeout |
+| Map blank / crash | Processing success first; storage payload; Leaflet assets in WAR |
+| Large file timeout | `PW_PROCESSING_TIMEOUT_MS`, shard logs, API health |
+| CI fail / local pass | Secrets, fixture cache, headless, dependency install |
+| Email not received | SMTP_* trimmed, App Password, `ENABLE_EMAIL_REPORTER` |
+| Junk video in mail | Fixed: only fail/retry + videos ≥ 50 KB |
 
-**Artifacts:** `test-results/` (screenshots, videos, traces), `playwright-report/`, blob shards.
-
-**Release quality gates:** startup, upload, processing, GIS/map, security, large-file acceptability, regression suite green (or known waived Pass+Warn only).
-
-```mermaid
-flowchart TD
-  Build --> Smoke --> Functional --> GIS --> Performance --> Security --> Report --> Decision
-```
+**Failure artifacts:** screenshots, traces (`on-first-retry`), videos (`retain-on-failure`), step logs in QA email.
 
 ---
 
-# 26. Future Enhancements & Summary
+# 19. Quality Gates & Release
 
-| Idea | Value |
-| ---- | ----- |
-| Visual regression | Pixel diffs on popup/map |
-| Performance dashboard | Process-time trends (GV-TC-023-02 baseline) |
-| Auto defect filing | Jira/GitHub from failures |
-| Dockerized runners | Reproducible CI |
+```mermaid
+flowchart TD
+  Build[Build / package extension] --> Smoke[Smoke GV-TC-001 / 003]
+  Smoke --> Func[Full functional + GIS]
+  Func --> Perf[Large-file suite]
+  Perf --> Sec[Security 022-*]
+  Sec --> Report[CI + email green]
+  Report --> Decision{Quality gate}
+  Decision -->|Pass| Release[Release]
+  Decision -->|Fail| Fix[Fix and re-run]
+```
 
-### Summary
+| Gate | Requirement |
+| ---- | ----------- |
+| Startup / UI | Pass |
+| Upload / process / metadata | Pass |
+| Map / download | Pass |
+| Negative handling | Pass |
+| Security | Pass |
+| Large files | Pass or accepted waiver |
+| Director email | 0 Failed (Pass+Warn reviewed) |
 
-This framework provides **repeatable E2E coverage** for the MrSID Viewer Extension:
+---
 
-✅ Extension startup & UI  
-✅ SID / TIFF / GeoTIFF processing  
-✅ Metadata & GIS map rendering  
-✅ Negative & security checks  
-✅ Large dataset stability  
-✅ Dual email reporting & 8-shard CI  
+# 20. Future Enhancements
 
-Every **GV-TC** above includes **workflow diagram**, **what is checked**, and **pass/fail criteria**.
+1. **Visual regression** — baseline screenshots for popup/map  
+2. **Performance dashboard** — track GV-TC-023-02 timings over time  
+3. **Auto defect filing** — Jira/GitHub from failed QA emails  
+4. **Historical comparison** — day-over-day status in reporter  
+5. **Dockerized runners** — identical local/CI images  
+
+---
+
+## Project Benefits
+
+| Benefit | How |
+| ------- | --- |
+| Faster validation | Full E2E on every push/schedule |
+| Release confidence | GIS + large + security covered |
+| Maintainability | POM + central test-data + helpers |
+| Clear reporting | Dual emails, final-status model, step logs |
+| Low noise | Infra warnings filtered from Pass+Warn |
+
+---
+
+## Final Summary
+
+This framework validates the MrSID Viewer Extension from **load → upload → process → metadata → map → download**, including **negative, large-file, and security** paths, with **sharded CI** and **director + QA email** reporting.
+
+✅ Startup & UI · ✅ SID/TIFF processing · ✅ Metadata & GIS · ✅ Map · ✅ Large data · ✅ Security · ✅ CI/CD
 
 ---
 
@@ -1029,6 +990,6 @@ Every **GV-TC** above includes **workflow diagram**, **what is checked**, and **
 
 **🌍 GeoWGS84 · MrSID Viewer Extension QA**
 
-`Playwright E2E · MV3 · Leaflet · Dual Emails · Sharded CI`
+*Every GV-TC has objective · workflow · checks · pass/fail criteria*
 
 </div>
