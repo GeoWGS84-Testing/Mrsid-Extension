@@ -730,22 +730,53 @@ jobs:
           export DAILY_REPORT_EMAILS="$(echo -n "${DAILY_REPORT_EMAILS:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
           export FAILURE_ALERT_EMAILS="$(echo -n "${FAILURE_ALERT_EMAILS:-}" | tr -d '\r' | sed 's/[[:space:]]*$//')"
 
-          npm run report:email
-          EMAIL_EXIT=$?
+          # Capture reporter stdout so the job summary is clean and actionable.
+          set +e
+          npm run report:email 2>&1 | tee /tmp/email-reporter.log
+          EMAIL_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          DAILY_SENT=$(grep -c "Daily summary sent" /tmp/email-reporter.log 2>/dev/null || true)
+          DETAIL_SENT=$(grep -c "Detailed report sent" /tmp/email-reporter.log 2>/dev/null || true)
+          MAIL_ACCEPTED=$(grep -c "Mail accepted:" /tmp/email-reporter.log 2>/dev/null || true)
+          LOGO_LINE=$(grep "Logo attached from" /tmp/email-reporter.log 2>/dev/null | head -1 || true)
+          FAIL_LINES=$(grep -E "❌ Failed|Email reporter finished with" /tmp/email-reporter.log 2>/dev/null || true)
 
           if [[ "$EMAIL_EXIT" -eq 0 ]]; then
             echo "status=sent" >> "$GITHUB_OUTPUT"
             {
               echo "## 📬 Email delivery"
               echo
-              echo "✅ `npm run report:email` completed successfully."
+              echo "| Item | Result |"
+              echo "| ---- | ------ |"
+              echo "| Exit code | \`${EMAIL_EXIT}\` |"
+              echo "| Daily summary | $([ \"$DAILY_SENT\" -gt 0 ] && echo '✅ sent' || echo '— not sent') |"
+              echo "| Detailed report | $([ \"$DETAIL_SENT\" -gt 0 ] && echo '✅ sent' || echo '— skipped (no failures/warnings)') |"
+              echo "| SMTP accepted | ${MAIL_ACCEPTED} message(s) |"
+              if [[ -n "$LOGO_LINE" ]]; then
+                echo "| Logo | ${LOGO_LINE#*[REPORTER] } |"
+              fi
+              echo
+              if [[ -n "$FAIL_LINES" ]]; then
+                echo "### Notes"
+                echo '```'
+                echo "$FAIL_LINES"
+                echo '```'
+              else
+                echo "✅ Email reporter completed successfully."
+              fi
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "status=failed" >> "$GITHUB_OUTPUT"
             {
               echo "## 📬 Email delivery"
               echo
-              echo "❌ `npm run report:email` failed with exit code **${EMAIL_EXIT}**."
+              echo "❌ \`npm run report:email\` failed with exit code **${EMAIL_EXIT}**."
+              echo
+              echo "### Reporter output (tail)"
+              echo '```'
+              tail -n 40 /tmp/email-reporter.log 2>/dev/null || true
+              echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
